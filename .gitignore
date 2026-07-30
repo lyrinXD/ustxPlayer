@@ -198,6 +198,18 @@ cython_debug/
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
+
+# ============ ustxPlayer specific ============
+
+# 用户设置（含本地路径等隐私信息）
+Settings.ini
+
+# 构建输出
+dist/
+build/
+
+# 运行时缓存
+cache/
 .cursorignore
 .cursorindexingignore
 
@@ -206,3 +218,13 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 Settings.ini
+
+# 项目本地缓存（运行时生成，启动/退出时清空）
+cache/
+
+# Nuitka 项目缓存
+.nuitka-cache/
+.nuitka-module-cache/
+
+# 旧版参考副本，不参与构建与分析
+原项目/

@@ -4,6 +4,7 @@
 #   QtWidgets: QApplication, QWidget, QVBoxLayout, QHBoxLayout, QFileDialog
 #   QtCore:    Qt, QTimer, Signal, QObject, QRectF, QPointF
 #   QtGui:     QPainter, QColor, QFont, QFontMetrics, QPen, QPolygonF, QIcon
+#   QtMultimedia: QMediaPlayer, QAudioOutput
 PySide6>=6.5.0
 
 # Fluent Design 组件库 — 现代 UI 控件
@@ -18,8 +19,16 @@ PySide6-Fluent-Widgets[full]>=1.11.2
 #   logger.info / logger.debug / logger.exception
 loguru>=0.7.0
 
+# YAML 解析 — 解析 .ustx 工程文件
+#   yaml.safe_load
+PyYAML>=6.0
+
+# Windows API 绑定 — qframelesswindow 隐式依赖
+#   win32api, win32gui, win32print（用于无边框窗口的 Windows 原生窗口管理）
+pywin32>=305
+
 
 # ==================== 标准库 (无需安装) ====================
-# os, sys, re, time, subprocess, webbrowser
+# os, sys, re, time, json, copy, hashlib, shutil, ctypes, winreg, webbrowser
 # datetime.timedelta, configparser
-# typing (List, Dict, Tuple, Optional, Union)
+# typing (List, Dict, Tuple, Optional, Union, Callable)

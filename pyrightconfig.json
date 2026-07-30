@@ -1,0 +1,13 @@
+{
+    "include": ["."],
+    "exclude": [
+        "原项目",
+        "__pycache__",
+        "cache",
+        "build",
+        "dist"
+    ],
+    "extraPaths": ["."],
+    "pythonVersion": "3.12",
+    "typeCheckingMode": "basic"
+}

@@ -16,13 +16,20 @@ from loguru import logger
 
 logger.remove()
 
-_log_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# 统一使用程序根目录（与 settings_manager.program_root 一致，基于 sys.argv[0]），
+# 禁止写入系统缓存目录。
+_log_dir = os.path.dirname(os.path.abspath(sys.argv[0]))
 
-logger.add(
-    os.path.join(_log_dir, "ustPlayer.log"),
-    level="DEBUG",
-    rotation="1 MB",
-    retention="7 days",
-)
+try:
+    logger.add(
+        os.path.join(_log_dir, "ustxPlayer.log"),
+        level="DEBUG",
+        rotation="1 MB",
+        retention="7 days",
+    )
+except Exception:
+    # 日志文件不可写时降级（如目录无权限），不应阻塞主程序启动
+    pass
 
-logger.add(sys.stdout, level="INFO", colorize=True)
+if sys.stdout is not None:
+    logger.add(sys.stdout, level="INFO", colorize=True)

@@ -1,18 +1,16 @@
 # other_page.py — "其他" 导航页
-"""版权信息、外部工具、使用协议入口、主题与强调色设置。"""
+"""主题与强调色、快捷键、外部工具、关于软件（含协议许可）。"""
 
-import os
-import subprocess
 import webbrowser
 from typing import Optional
 
+from PySide6.QtCore import Qt, QUrl
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 
 from qfluentwidgets import (
     PushButton, BodyLabel, StrongBodyLabel, HorizontalSeparator,
-    ComboBox, ColorPickerButton,
+    ComboBox, ColorPickerButton, HyperlinkButton,
     InfoBar, InfoBarPosition,
 )
 
@@ -20,7 +18,7 @@ from core.settings_manager import SettingsManager
 
 
 class OtherPage(QWidget):
-    """其他标签页 — 关于软件 / 工具 / 协议 / 主题与强调色。"""
+    """其他标签页 — 主题/快捷键/工具/关于软件。"""
 
     def __init__(self, settings: SettingsManager, parent: Optional[QWidget] = None):
         super().__init__(parent)
@@ -34,37 +32,6 @@ class OtherPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(12)
-
-        layout.addWidget(StrongBodyLabel("/ 关于软件"))
-
-        # 版权信息（可点击）
-        copyright_lbl = BodyLabel("ustPlayer - v26f19 (c) 2026 SYEternal_R & 灰棱HiRenG")
-        copyright_lbl.setStyleSheet("color: #0066CC;")
-        copyright_lbl.setCursor(Qt.PointingHandCursor)
-        copyright_lbl.mousePressEvent = lambda e: self._open_url(
-            "https://space.bilibili.com/661930756"
-        )
-        layout.addWidget(copyright_lbl)
-
-        layout.addWidget(HorizontalSeparator())
-
-        # 外部工具与纠错
-        layout.addWidget(StrongBodyLabel("/ 外部工具与纠错"))
-
-        tool_row = QHBoxLayout()
-        tool_row.setSpacing(12)
-
-        uf_btn = PushButton("UtaFormatix")
-        uf_btn.clicked.connect(lambda: self._open_url("https://utaformatix.tk/"))
-        tool_row.addWidget(uf_btn)
-
-        er_btn = PushButton("ERcodes纠错")
-        er_btn.clicked.connect(self._open_ercode)
-        tool_row.addWidget(er_btn)
-        tool_row.addStretch()
-        layout.addLayout(tool_row)
-
-        layout.addWidget(HorizontalSeparator())
 
         # ---- 主题设置 ----
         layout.addWidget(StrongBodyLabel("/ 主题"))
@@ -90,7 +57,8 @@ class OtherPage(QWidget):
 
         accent_custom_row = QHBoxLayout()
         accent_custom_row.setSpacing(8)
-        accent_custom_row.addWidget(BodyLabel("自定义颜色:"))
+        self._accent_custom_label = BodyLabel("自定义颜色:")
+        accent_custom_row.addWidget(self._accent_custom_label)
         self.accent_color_picker = ColorPickerButton(
             QColor(self._s.custom_accent_color), "选择强调色", self
         )
@@ -100,21 +68,86 @@ class OtherPage(QWidget):
 
         layout.addWidget(HorizontalSeparator())
 
-        # 协议与许可
-        layout.addWidget(StrongBodyLabel("/ 协议与许可"))
+        # ---- 快捷键说明 ----
+        layout.addWidget(StrongBodyLabel("/ 播放器快捷键"))
+        shortcuts_text = BodyLabel(
+            "ESC : 退出\n"
+            "空格 : 播放/暂停    X : 倍速-0.1    C : 倍速+0.1    Z : 还原1倍\n"
+            "↑ ↓ : 系统音量    ← → : 快退/快进10秒"
+        )
+        shortcuts_text.setWordWrap(True)
+        layout.addWidget(shortcuts_text)
 
+        layout.addWidget(HorizontalSeparator())
+
+        # ---- 外部工具 ----
+        layout.addWidget(StrongBodyLabel("/ 外部工具"))
+
+        tool_row = QHBoxLayout()
+        tool_row.setSpacing(12)
+
+        uf_btn = PushButton("UtaFormatix")
+        uf_btn.clicked.connect(lambda: self._open_url("https://utaformatix.tk/"))
+        tool_row.addWidget(uf_btn)
+
+        ml_btn = PushButton("163MusicLyrics")
+        ml_btn.clicked.connect(lambda: self._open_url("https://github.com/jitwxs/163MusicLyrics/"))
+        tool_row.addWidget(ml_btn)
+
+        v2m_btn = PushButton("Vocal2Midi")
+        v2m_btn.clicked.connect(lambda: self._open_url("https://www.bilibili.com/video/BV1Ww7C6kEqL/"))
+        tool_row.addWidget(v2m_btn)
+
+        sig_btn = PushButton("signal")
+        sig_btn.clicked.connect(lambda: self._open_url("https://signalmidi.app/edit"))
+        tool_row.addWidget(sig_btn)
+
+        tool_row.addStretch()
+        layout.addLayout(tool_row)
+
+        layout.addWidget(HorizontalSeparator())
+
+        # ---- 关于软件（含协议与许可）----
+        layout.addWidget(StrongBodyLabel("/ 关于软件"))
+
+        # 衍生项目说明
+        derive_label = BodyLabel("本项目（ustxPlayer）是基于 ustPlayer 的衍生项目")
+        layout.addWidget(derive_label)
+
+        # 第一行：原项目 + GitHub仓库
+        orig_row = QHBoxLayout()
+        orig_row.setSpacing(12)
+        orig_row.addWidget(BodyLabel("原项目:"))
+        orig_row.addWidget(HyperlinkButton(
+            "https://space.bilibili.com/661930756",
+            "ustPlayer - v26f19 (c) 2026 SYEternal_R && 灰棱HiRenG"
+        ))
+        orig_row.addWidget(HyperlinkButton(
+            "https://github.com/SYEternalR/ustPlayer", "GitHub仓库"
+        ))
+        orig_row.addStretch()
+        layout.addLayout(orig_row)
+
+        # 第二行：本项目 + GitHub仓库
+        proj_row = QHBoxLayout()
+        proj_row.setSpacing(12)
+        proj_row.addWidget(BodyLabel("本项目:"))
+        proj_row.addWidget(HyperlinkButton(
+            "https://space.bilibili.com/1398756020", "ustxPlayer - v26g30 (c) 2026 SYEternal_R && 灰棱HiRenG && lyrinXD"
+        ))
+        proj_row.addWidget(HyperlinkButton(
+            "https://github.com/lyrinXD/ustxPlayer", "GitHub仓库"
+        ))
+        proj_row.addStretch()
+        layout.addLayout(proj_row)
+
+        # 最后一行：协议说明 + 使用协议（超链接样式，点击用系统默认程序打开）
         lic_row = QHBoxLayout()
         lic_row.setSpacing(12)
-
-        terms_btn = PushButton("使用协议")
-        terms_btn.clicked.connect(self._open_terms)
-        lic_row.addWidget(terms_btn)
-
-        gh_btn = PushButton("GitHub仓库")
-        gh_btn.clicked.connect(
-            lambda: self._open_url("https://github.com/SYEternalR/ustPlayer")
-        )
-        lic_row.addWidget(gh_btn)
+        lic_row.addWidget(BodyLabel("本项目沿用原项目的使用协议"))
+        lic_row.addWidget(HyperlinkButton(
+            QUrl.fromLocalFile(self._s.terms_file_path).toString(), "使用协议"
+        ))
         lic_row.addStretch()
         layout.addLayout(lic_row)
 
@@ -147,7 +180,6 @@ class OtherPage(QWidget):
         s.accent_color_mode_changed.connect(self._on_settings_accent_mode_changed)
 
         # 自定义颜色选择器
-        self.accent_color_picker.setColor(QColor(s.custom_accent_color))
         self.accent_color_picker.colorChanged.connect(self._on_accent_color_pick)
         s.custom_accent_color_changed.connect(self._on_settings_accent_color_changed)
 
@@ -159,24 +191,26 @@ class OtherPage(QWidget):
     def _on_theme_combo_changed(self, text: str):
         """主题下拉框变化 → 更新 settings.theme_mode。"""
         mode = self._theme_combo_mode(text)
-        setattr(self._s, "theme_mode", mode)
+        self._s.theme_mode = mode
 
     def _on_accent_color_mode_combo_changed(self, text: str):
         """强调色模式变化 → 更新 settings。"""
         mode = self._accent_mode_value(text)
-        setattr(self._s, "accent_color_mode", mode)
+        self._s.accent_color_mode = mode
         self._update_accent_custom_visible(mode)
 
     def _on_accent_color_pick(self, color: QColor):
         """自定义颜色选择 → 更新 settings。"""
-        setattr(self._s, "custom_accent_color", color.name())
+        self._s.custom_accent_color = color.name()
 
     def _update_accent_custom_visible(self, mode: str):
-        """自定义模式下显示颜色选择器。"""
-        self.accent_color_picker.setVisible(mode == "custom")
+        """自定义模式下显示颜色选择器，跟随系统时隐藏整行。"""
+        visible = mode == "custom"
+        self._accent_custom_label.setVisible(visible)
+        self.accent_color_picker.setVisible(visible)
 
     def _on_settings_theme_mode_changed(self, v: str):
-        """settings 端主题模式变化 → 同步下拉框（避免 lambda GC 问题）。"""
+        """settings 端主题模式变化 → 同步下拉框。"""
         self.theme_combo.blockSignals(True)
         self.theme_combo.setCurrentText(self._theme_combo_text(v))
         self.theme_combo.blockSignals(False)
@@ -216,45 +250,15 @@ class OtherPage(QWidget):
 
     def _open_url(self, url: str):
         try:
-            webbrowser.open(url, new=2)
+            webbrowser.open_new_tab(url)
         except Exception as e:
-            InfoBar.error("ERcode003", f"打开网页失败：{e}", 5000,
-                          parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
-
-    def _open_ercode(self):
-        try:
-            path = self._s.ercode_file_path
-            subprocess.Popen(
-                ["notepad.exe", path],
-                shell=True,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE,
-            )
-        except Exception as e:
-            InfoBar.error("ERcode008", f"打开ERcode.txt失败：{e}", 5000,
-                          parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
-
-    def _open_terms(self):
-        try:
-            path = self._s.terms_file_path
-            subprocess.Popen(
-                ["notepad.exe", path],
-                shell=True,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                stdin=subprocess.PIPE,
-            )
-        except Exception as e:
-            InfoBar.error("ERcode009", f"打开Terms.txt失败：{e}", 5000,
+            InfoBar.error("ERcode003", f"打开网页失败：{e}", orient=Qt.Orientation.Vertical, duration=3000,
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
 
     # ===================== 同步 =====================
 
-    def _sync_ui_from_settings(self):
-        """从 settings 同步所有 UI 控件。"""
+    def sync_all_from_settings(self):
+        """从 settings 同步所有 UI 控件（导入 uplr 或导航切换后调用）。"""
         s = self._s
         self.theme_combo.setCurrentText(self._theme_combo_text(s.theme_mode))
         self.accent_color_mode_combo.setCurrentText(
@@ -262,7 +266,3 @@ class OtherPage(QWidget):
         )
         self.accent_color_picker.setColor(QColor(s.custom_accent_color))
         self._update_accent_custom_visible(s.accent_color_mode)
-
-    def sync_all_from_settings(self):
-        """导入 uplr 或导航切换后同步 UI。"""
-        self._sync_ui_from_settings()

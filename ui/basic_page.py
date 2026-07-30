@@ -2,12 +2,12 @@
 """项目信息、显示选项和播放控制。"""
 
 import os
-from typing import Optional
+from typing import Optional, Callable
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFileDialog,
 )
-from PySide6.QtCore import Qt
 
 from qfluentwidgets import (
     LineEdit, PushButton, PrimaryPushButton, SwitchButton,
@@ -15,7 +15,8 @@ from qfluentwidgets import (
     InfoBar, InfoBarPosition,
 )
 
-from core.settings_manager import SettingsManager
+from core.log import logger
+from core.settings_manager import SettingsManager, ProjectFileMissingError
 
 
 class BasicPage(QWidget):
@@ -24,11 +25,22 @@ class BasicPage(QWidget):
     def __init__(self, settings: SettingsManager, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self._s = settings
-        self._play_callback: Optional[callable] = None
+        self._play_callback: Optional[Callable] = None
+        # 以下属性在 _setup_ui 中通过 setattr 动态创建，此处显式声明类型供静态分析识别
+        self.edit_project_name: LineEdit
+        self.edit_song_name: LineEdit
+        self.edit_song_author: LineEdit
+        self.edit_ust_author: LineEdit
+        self.sw_show_bpm: SwitchButton
+        self.sw_show_play_time: SwitchButton
+        self.sw_show_song_name: SwitchButton
+        self.sw_show_song_author: SwitchButton
+        self.sw_show_ust_author: SwitchButton
+        self.sw_show_copyright: SwitchButton
         self._setup_ui()
         self._connect_signals()
 
-    def set_play_callback(self, callback: callable):
+    def set_play_callback(self, callback: Callable):
         self._play_callback = callback
 
     # ===================== UI 构建 =====================
@@ -65,6 +77,7 @@ class BasicPage(QWidget):
             ("显示曲目信息", "show_song_name"),
             ("显示MIDI作者", "show_song_author"),
             ("显示调音师",   "show_ust_author"),
+            ("显示软件版权信息", "show_copyright"),
         ]
         cols = 2
         for i in range(0, len(switches), cols):
@@ -104,7 +117,7 @@ class BasicPage(QWidget):
         lbl.setMinimumWidth(90)
         row.addWidget(lbl)
         edit = LineEdit()
-        edit.setPlaceholderText(f"请输入{label.strip('：')}")
+        edit.setPlaceholderText(f"请输入{label.removesuffix('：')}")
         row.addWidget(edit, 1)
         setattr(self, f"edit_{attr}", edit)
         parent_layout.addLayout(row)
@@ -124,6 +137,7 @@ class BasicPage(QWidget):
         self.sw_show_song_name.setChecked(s.show_song_name)
         self.sw_show_song_author.setChecked(s.show_song_author)
         self.sw_show_ust_author.setChecked(s.show_ust_author)
+        self.sw_show_copyright.setChecked(s.show_copyright)
 
         # UI → settings
         self.edit_project_name.textChanged.connect(lambda v: setattr(s, "project_name", v))
@@ -135,6 +149,7 @@ class BasicPage(QWidget):
         self.sw_show_song_name.checkedChanged.connect(lambda v: setattr(s, "show_song_name", v))
         self.sw_show_song_author.checkedChanged.connect(lambda v: setattr(s, "show_song_author", v))
         self.sw_show_ust_author.checkedChanged.connect(lambda v: setattr(s, "show_ust_author", v))
+        self.sw_show_copyright.checkedChanged.connect(lambda v: setattr(s, "show_copyright", v))
 
         # 按钮
         self.import_btn.clicked.connect(self._on_import)
@@ -146,26 +161,35 @@ class BasicPage(QWidget):
     def _on_import(self):
         file_path, _ = QFileDialog.getOpenFileName(
             self, "打开工程文件", self._s.last_open_dir,
-            "ustPlayer工程文件 (*.uplr);;所有文件 (*.*)",
+            "ustxPlayer工程文件 (*.uplr);;所有文件 (*.*)",
         )
         if not file_path:
             return
         try:
             self._s.import_uplr(file_path)
-            self._sync_ui_from_settings()
             self._s.last_open_dir = os.path.dirname(file_path)
             self._s.write_settings()
-            InfoBar.success("成功", f"已加载工程：{file_path}", 3000,
+            InfoBar.success("成功", f"已加载工程：{file_path}", orient=Qt.Orientation.Vertical, duration=2000,
                             parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
+        except ProjectFileMissingError as e:
+            # 配置已加载到内存，仅文件路径无效：同步 UI 供用户重新选择文件
+            self._s.last_open_dir = os.path.dirname(file_path)
+            self._s.write_settings()
+            InfoBar.error("ERcode007", f"工程已加载，但以下文件路径无效：\n{e}",
+                          orient=Qt.Orientation.Vertical, duration=5000, parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
         except Exception as e:
-            InfoBar.error("ERcode007", f"加载文件失败：{e}", 5000,
+            logger.exception("加载文件失败")
+            InfoBar.error("ERcode007", f"加载文件失败：{e}", orient=Qt.Orientation.Vertical, duration=3000,
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
+        finally:
+            # 无论成功还是文件缺失，均需同步 UI（配置已重置+加载）
+            self._sync_ui_from_settings()
 
     def _on_export(self):
         file_path, _ = QFileDialog.getSaveFileName(
             self, "导出你的工程文件",
             os.path.join(self._s.last_export_dir, self._s.project_name or "未命名"),
-            "ustPlayer工程文件 (*.uplr);;所有文件 (*.*)",
+            "ustxPlayer工程文件 (*.uplr);;所有文件 (*.*)",
         )
         if not file_path:
             return
@@ -173,10 +197,11 @@ class BasicPage(QWidget):
             self._s.export_uplr(file_path)
             self._s.last_export_dir = os.path.dirname(file_path)
             self._s.write_settings()
-            InfoBar.success("成功", f"工程已导出到：{file_path}", 3000,
+            InfoBar.success("成功", f"工程已导出到：{file_path}", orient=Qt.Orientation.Vertical, duration=2000,
                             parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
         except Exception as e:
-            InfoBar.error("ERcode006", f"导出失败：{e}", 5000,
+            logger.exception("导出失败")
+            InfoBar.error("ERcode005", f"导出失败：{e}", orient=Qt.Orientation.Vertical, duration=3000,
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
 
     def _on_play(self):
@@ -194,6 +219,7 @@ class BasicPage(QWidget):
         self.sw_show_song_name.setChecked(s.show_song_name)
         self.sw_show_song_author.setChecked(s.show_song_author)
         self.sw_show_ust_author.setChecked(s.show_ust_author)
+        self.sw_show_copyright.setChecked(s.show_copyright)
 
     def sync_all_from_settings(self):
         self._sync_ui_from_settings()
