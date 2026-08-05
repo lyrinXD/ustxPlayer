@@ -10,7 +10,7 @@
 ![GitHub All Releases](https://img.shields.io/github/downloads/lyrinXD/ustxPlayer/total?style=for-the-badge)
 ![GitHub Stars](https://img.shields.io/github/stars/lyrinXD/ustxPlayer?style=for-the-badge)
 
-[配布视频](https://www.bilibili.com/video/BV1YjcwzVEcX "bilibili弹幕网") | [更新日志](UPDATELOG.md)
+[配布视频](https://www.bilibili.com/video/BV1puMk61EgT "bilibili弹幕网") | [更新日志](UPDATELOG.md)
 
 ![软件截图](https://github.com/user-attachments/assets/81190099-3f1d-4700-ac68-9588f30c04cb)
 
@@ -26,7 +26,7 @@
 - 旧版 `.ust` 用户可通过 [UtaFormatix](https://utaformatix.tk/) 等工具转换后使用。
 
 ### 逐字样式系统
-- 在项目中为**每一个字**精确定义样式（字体、颜色、位置等）。
+- 在项目中为**每一个字**精确定义样式（颜色、背景色等）。
 - 配套直观的样式编辑界面，支持批量编辑。
 
 ### 增强播放体验
@@ -66,7 +66,7 @@ python main.py
 ### 打包为可执行文件
 
 ```bash
-# 确保已安装 Nuitka（推荐）或 PyInstaller
+# 确保已安装 Nuitka
 pip install -r requirements.txt
 
 # 方式一：使用 build.bat（推荐，Nuitka 会自动处理编译器）
@@ -84,7 +84,7 @@ python -m nuitka --standalone --enable-plugin=pyside6 main.py
 - 歌词推荐使用 **交错** 或 **独立** 格式；合并格式可能显示异常。
 - 工程文件（`.uplr`）采用全新格式，**不兼容旧版 ustPlayer 的 `.uplr` 文件**。新格式内嵌 USTX 内容，可独立分发，无需额外携带 `.ustx` 文件。
 - 工程文件（.uplr）中的 ustx 等文件路径**可以为空**，故工程文件可做模板使用。
-- 同时打开两个界面可能会出现异常。
+- 同时打开两个界面可能会出现异常（缓存文件被删除等）。
 
 
 ## 致谢
