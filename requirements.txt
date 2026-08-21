@@ -27,6 +27,9 @@ PyYAML>=6.0
 #   win32api, win32gui, win32print（用于无边框窗口的 Windows 原生窗口管理）
 pywin32>=305
 
+# FFmpeg Python 绑定 — 导出时 RGBA→YUV420P 转换 + 音频时长探测
+#   VideoFrame / reformat（内部走 libswscale）
+av>=13.0.0
 
 # ==================== 标准库 (无需安装) ====================
 # os, sys, re, time, json, copy, hashlib, shutil, ctypes, winreg, webbrowser

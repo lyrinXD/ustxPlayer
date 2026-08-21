@@ -4,26 +4,32 @@
 import os
 import sys
 import winreg
+from typing import Optional
 
-from PySide6.QtWidgets import QApplication, QScrollArea, QWidget
-from PySide6.QtCore import Qt, QTimer, QEvent
+from PySide6.QtWidgets import QApplication, QWidget, QScrollArea
+from qfluentwidgets import SmoothScrollArea
+from PySide6.QtCore import Qt, QTimer, QEvent, QSize
 from PySide6.QtGui import QIcon, QColor, QGuiApplication
 
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition, FluentIcon,
     InfoBar, InfoBarPosition, MessageBox, setTheme, Theme, setThemeColor,
+    PopUpAniStackedWidget, PrimaryToolButton, ToolTipFilter,
 )
 
+from core.app_icons import apply_icon, resolve_icon_path
 from core.log import logger
-from core.settings_manager import SettingsManager, ProjectFileMissingError
-from core.ustxplayer import display, detect_lrc_max_languages
+from core.settings_manager import SettingsManager
+from core.uprj_io import ProjectFileMissingError
 import core.ustxreader as ur
 
+from ui.accent_card import AccentHeaderCardWidget
 from ui.basic_page import BasicPage
 from ui.file_page import FilePage
 from ui.player_style_page import PlayerStylePage
 from ui.lyric_edit_page import LyricEditPage
 from ui.other_page import OtherPage
+from ui.export_window import ExportPage
 
 
 class MainWindow(FluentWindow):
@@ -41,13 +47,25 @@ class MainWindow(FluentWindow):
         self._setup_theme()
         self._setup_accent_color()
 
-        icon_path = os.path.join(self._settings.program_root, "icon.ico")
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
+        icon_path = resolve_icon_path(self._settings.theme.current_icon)
+        if icon_path:
+            apply_icon(self, icon_path)
 
         self._build_pages()
         self._init_navigation()
         self.basic_page.set_play_callback(self._on_play)
+        self.basic_page.set_export_callback(self._on_video_export)
+
+        # 导出页返回按钮：比撤回键小一号（34x30 / 14px 图标），
+        # 用库自带 PrimaryToolButton（强调色底 + 自动反色图标，随主题适配），
+        # 提示该按钮语义已不同（退出导出页）
+        self.title_back_btn = PrimaryToolButton(FluentIcon.LEFT_ARROW, self)
+        self.title_back_btn.setFixedSize(34, 30)
+        self.title_back_btn.setIconSize(QSize(14, 14))
+        self.title_back_btn.setToolTip("返回首页")
+        self.title_back_btn.hide()
+        self.title_back_btn.clicked.connect(self._exit_export_page)
+        self.export_page.export_busy_changed.connect(self._on_export_busy_changed)
 
         # 启用拖拽
         self.setAcceptDrops(True)
@@ -57,7 +75,9 @@ class MainWindow(FluentWindow):
 
         # 启动后同步所有页面
         QTimer.singleShot(0, self._sync_all_pages)
-        QTimer.singleShot(100, self._load_dropped_uplr)
+        QTimer.singleShot(100, self._load_dropped_uprj)
+        # 启动延迟自动检测更新（避开初始化/拖拽，后台静默，失败不提示）
+        QTimer.singleShot(5000, lambda: self.other_page.check_update(auto=True))
 
     # ===================== 主题管理 =====================
 
@@ -72,13 +92,13 @@ class MainWindow(FluentWindow):
                 self._on_system_theme_changed
             )
 
-        self._settings.theme_mode_changed.connect(
+        self._settings.theme.theme_mode_changed.connect(
             self._on_theme_mode_changed
         )
 
     def _apply_theme(self):
         """根据 theme_mode 设置 qfluentwidgets 主题（亮/暗/自动）。"""
-        mode = self._settings.theme_mode
+        mode = self._settings.theme.theme_mode
         if mode == "auto":
             setTheme(Theme.AUTO)
         elif mode == "light":
@@ -94,7 +114,7 @@ class MainWindow(FluentWindow):
 
     def _on_system_theme_changed(self):
         """系统主题变化 — 仅在'跟随系统'模式下刷新。"""
-        if self._settings.theme_mode == "auto":
+        if self._settings.theme.theme_mode == "auto":
             setTheme(Theme.AUTO)
             self._refresh_theme()
             logger.info("系统主题已变化，自动刷新主题")
@@ -112,12 +132,19 @@ class MainWindow(FluentWindow):
         self._last_windows_accent = None
         self._apply_accent_color()
 
-        self._settings.accent_color_mode_changed.connect(
+        self._settings.theme.accent_color_mode_changed.connect(
             self._on_accent_color_mode_changed
         )
-        self._settings.custom_accent_color_changed.connect(
+        self._settings.theme.custom_accent_color_changed.connect(
             self._on_custom_accent_color_changed
         )
+
+        # 卡片阴影全局开关：其他页"卡片阴影"开关触发广播到现有卡片；
+        # 建页前同步一次，让新建卡片继承持久化的全局状态。
+        self._settings.theme.card_shadow_enabled_changed.connect(
+            AccentHeaderCardWidget.set_global_shadow
+        )
+        AccentHeaderCardWidget.set_global_shadow(self._settings.theme.card_shadow_enabled)
 
     @staticmethod
     def _get_windows_accent_color() -> str | None:
@@ -139,7 +166,7 @@ class MainWindow(FluentWindow):
 
     def _apply_accent_color(self):
         """根据 accent_color_mode 应用强调色。"""
-        if self._settings.accent_color_mode == "auto":
+        if self._settings.theme.accent_color_mode == "auto":
             color = self._get_windows_accent_color()
             if color:
                 self._last_windows_accent = color
@@ -148,11 +175,11 @@ class MainWindow(FluentWindow):
             elif self._last_windows_accent:
                 setThemeColor(QColor(self._last_windows_accent))
             else:
-                setThemeColor(QColor(self._settings.custom_accent_color))
+                setThemeColor(QColor(self._settings.theme.custom_accent_color))
                 logger.info("无法获取系统强调色，使用默认值")
         else:
-            setThemeColor(QColor(self._settings.custom_accent_color))
-            logger.info(f"强调色已应用(自定义): {self._settings.custom_accent_color}")
+            setThemeColor(QColor(self._settings.theme.custom_accent_color))
+            logger.info(f"强调色已应用(自定义): {self._settings.theme.custom_accent_color}")
 
     def _on_accent_color_mode_changed(self, mode: str):
         """用户切换强调色模式 → 重新应用并持久化。"""
@@ -162,7 +189,7 @@ class MainWindow(FluentWindow):
 
     def _on_custom_accent_color_changed(self, color: str):
         """用户更改自定义强调色 → 仅在 custom 模式下生效并持久化。"""
-        if self._settings.accent_color_mode == "custom":
+        if self._settings.theme.accent_color_mode == "custom":
             setThemeColor(QColor(color))
             logger.info(f"自定义强调色已更新: {color}")
         self._settings.write_settings()
@@ -175,6 +202,16 @@ class MainWindow(FluentWindow):
         self.player_style_page = PlayerStylePage(self._settings)
         self.lyric_edit_page = LyricEditPage(self._settings)
         self.other_page = OtherPage(self._settings)
+        self.export_page = ExportPage(self._settings)
+        # 导出页用独立 PopUpAniStackedWidget 承载（占位页 + 导出页），
+        # 进场上滑、退场下滑；不碰 FluentWindow 自带的导航 StackedWidget
+        self.export_stack = PopUpAniStackedWidget(self)
+        self.export_blank = QWidget()
+        self.export_stack.addWidget(self.export_blank)
+        self.export_stack.addWidget(self.export_page)
+        self.export_stack.aniFinished.connect(self._on_export_ani_finished)
+        # 覆盖在内容区（标题栏下方），平时隐藏
+        self.export_stack.hide()
 
         # 以下 scroll_* 属性在循环中通过 setattr 动态创建，此处显式声明类型供静态分析识别
         self.scroll_basic_page: QScrollArea
@@ -183,37 +220,32 @@ class MainWindow(FluentWindow):
         self.scroll_lyric_edit_page: QScrollArea
         self.scroll_other_page: QScrollArea
 
-        # 用 QScrollArea 包裹防止窗口缩小时重叠
+        # SmoothScrollArea：平滑滚动 + Fluent 风格滚动条，防止窗口缩小时页面重叠
         for name in ("basic_page", "file_page", "player_style_page",
                      "lyric_edit_page", "other_page"):
             page = getattr(self, name)
-            scroll = QScrollArea()
+            scroll = SmoothScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setWidget(page)
-            scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+            scroll.setFrameShape(SmoothScrollArea.Shape.NoFrame)
             scroll.setObjectName(f"scroll_{name}")
             setattr(self, f"scroll_{name}", scroll)
 
         self._apply_area_background()
 
     def _apply_area_background(self):
-        """根据当前主题设置页面背景色，解决暗色模式泛白问题。"""
-        from qfluentwidgets import qconfig
-        is_dark = qconfig.theme == Theme.DARK
-        bg = "#1a1a1a" if is_dark else "#f5f5f5"
+        """滚动区透明透出 Mica；导出页内容区底色由库 StackedWidget 提供。"""
+        area_qss = (
+            "QScrollArea { background: transparent; border: none; }"
+            "QScrollArea > QWidget > QWidget { background: transparent; }"
+        )
         for name in ("basic_page", "file_page", "player_style_page",
                      "lyric_edit_page", "other_page"):
             scroll = getattr(self, f"scroll_{name}", None)
             if scroll:
-                scroll.setStyleSheet(
-                    f"QScrollArea {{ background: {bg}; }}"
-                    f"QScrollArea > QWidget > QWidget {{ background: {bg}; }}"
-                    f"QScrollBar:vertical {{ background: transparent; width: 8px; margin: 0; }}"
-                    f"QScrollBar::handle:vertical {{ background: #88888880; border-radius: 4px; min-height: 20px; }}"
-                    f"QScrollBar::handle:vertical:hover {{ background: #aaaaaa80; }}"
-                    f"QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}"
-                    f"QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: none; }}"
-                )
+                scroll.setStyleSheet(area_qss)
+        if hasattr(self, "export_page"):
+            self.export_page.scroll_area.setStyleSheet(area_qss)
 
     def _init_navigation(self):
         self.addSubInterface(
@@ -237,43 +269,79 @@ class MainWindow(FluentWindow):
             position=NavigationItemPosition.BOTTOM,
         )
 
+    def resizeEvent(self, event):
+        """导出页覆盖层跟随窗口内容区（标题栏下方）尺寸变化。"""
+        super().resizeEvent(event)
+        if not hasattr(self, "export_stack"):
+            return
+        title_h = 48  # FluentWindow widgetLayout 顶部留白高度
+        self.export_stack.setGeometry(0, title_h, self.width(), self.height() - title_h)
+        self.export_stack.raise_()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if not hasattr(self, "export_stack"):
+            return
+        title_h = 48
+        self.export_stack.setGeometry(0, title_h, self.width(), self.height() - title_h)
+
     # ===================== 播放逻辑 =====================
 
     def _on_play(self):
-        ustx_path = self._settings.ustx_path.strip()
-        logger.info(f"Play 按钮点击，USTX路径: {ustx_path}")
-
-        if not ustx_path or not os.path.exists(ustx_path):
-            logger.warning(f"文件无效: {ustx_path}")
-            InfoBar.error(
-                "ERcode001", "请选择有效的USTX文件！",
-                orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
-            )
+        ustx_info = self._prepare_ustx_info()
+        if ustx_info is None:
             return
-
         try:
-            # 优先复用解析缓存（path 一致时），否则同步解析并刷新缓存
-            cached = self._settings.cached_ust_info
-            if cached and cached.get("path") == ustx_path and cached.get("info"):
-                core_ust_info = cached["info"]
-                logger.info("复用 file_page 解析缓存")
-            else:
-                core_ust_info = ur.get_ustx_info(ustx_path)
-                self._settings.cached_ust_info = {"path": ustx_path, "info": core_ust_info}
-            # get_ustx_info 返回联合类型，用 isinstance 收窄到 list 后再取 len
-            _notes = core_ust_info.get('notes', [])
-            logger.info(
-                f"解析完成 - 版本={core_ust_info.get('version')}, "
-                f"BPM={core_ust_info.get('tempo')}, "
-                f"音符数={len(_notes) if isinstance(_notes, list) else 0}"
-            )
-
-            ust_info = self._settings.build_ust_info(core_ust_info)
-
             msg = MessageBox("启动播放器",
                              "按下确认后将启动播放器，鼠标单击后按ESC键退出全屏", self)
             if msg.exec():
-                self._launch_player(ust_info)
+                self._launch_player(ustx_info)
+        except Exception as e:
+            logger.exception("播放准备失败")
+            InfoBar.error(
+                "ERcode008", f"播放准备失败：{e}",
+                orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
+            )
+
+    def _prepare_ustx_info(self) -> Optional[dict]:
+        """构建 ustx_info（播放/导出共用）。失败返回 None。
+
+        自包含工程（.uprj v3）无 USTX 路径，直接使用缓存的内嵌解析数据；
+        否则校验 USTX 路径并解析。
+        """
+        ustx_path = self._settings.project.ustx_path.strip()
+        cached = self._settings.cached_ustx_info
+        logger.info(f"Play 按钮点击，USTX路径: {ustx_path or '（工程内嵌）'}")
+
+        try:
+            # 内嵌模式：ustx_path 为空但缓存已有解析数据（来自 .uprj v3）
+            if not ustx_path and cached and cached.get("info"):
+                core_ustx_info = cached["info"]
+                logger.info("复用工程文件内嵌解析数据")
+            elif ustx_path and os.path.exists(ustx_path):
+                # 优先复用解析缓存（path 一致时），否则同步解析并刷新缓存
+                if cached and cached.get("path") == ustx_path and cached.get("info"):
+                    core_ustx_info = cached["info"]
+                    logger.info("复用 file_page 解析缓存")
+                else:
+                    core_ustx_info = ur.get_ustx_info(ustx_path)
+                    self._settings.cached_ustx_info = {"path": ustx_path, "info": core_ustx_info}
+            else:
+                logger.warning(f"无可用数据: ustx_path={ustx_path!r}")
+                InfoBar.error(
+                    "ERcode001", "请先选择 USTX 文件或加载工程文件！",
+                    orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
+                )
+                return None
+            # get_ustx_info 返回联合类型，用 isinstance 收窄到 list 后再取 len
+            _notes = core_ustx_info.get('notes', [])
+            logger.info(
+                f"解析完成 - 版本={core_ustx_info.get('version')}, "
+                f"BPM={core_ustx_info.get('tempo')}, "
+                f"音符数={len(_notes) if isinstance(_notes, list) else 0}"
+            )
+
+            return self._settings.build_ustx_info(core_ustx_info)
 
         except Exception as e:
             logger.exception("播放准备失败")
@@ -281,6 +349,57 @@ class MainWindow(FluentWindow):
                 "ERcode008", f"播放准备失败：{e}",
                 orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
             )
+            return None
+
+    def _on_video_export(self):
+        """进入视频导出页面：隐藏导航栏，页面覆盖内容区。"""
+        ustx_info = self._prepare_ustx_info()
+        if ustx_info is None:
+            return
+        try:
+            self.export_page.refresh(ustx_info)
+            self.navigationInterface.hide()
+            self.stackedWidget.hide()
+            self.export_stack.show()
+            # 与导航栏撤回键同一位置（居中于其 40x36 范围内）
+            rb = self.navigationInterface.panel.returnButton
+            rb_pos = rb.mapTo(self, rb.rect().topLeft())
+            self.title_back_btn.move(
+                rb_pos.x() + (rb.width() - self.title_back_btn.width()) // 2,
+                rb_pos.y() + (rb.height() - self.title_back_btn.height()) // 2,
+            )
+            self.title_back_btn.show()
+            self.export_stack.setCurrentWidget(
+                self.export_page, needPopOut=False, duration=250,
+            )
+            logger.info("已进入视频导出页面")
+        except Exception as e:
+            logger.exception("视频导出页面打开失败")
+            InfoBar.error(
+                "ERcode204", f"导出页面打开失败：{e}",
+                orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
+            )
+
+    def _exit_export_page(self):
+        """退出导出页面：恢复导航栏并切回基础页。"""
+        # 导出页下滑退场，动画结束后由 _on_export_ani_finished 恢复主界面
+        self.export_stack.setCurrentWidget(
+            self.export_blank, needPopOut=True, duration=250,
+        )
+
+    def _on_export_busy_changed(self, busy: bool):
+        """导出期间冻结返回键，结束后恢复。"""
+        self.title_back_btn.setEnabled(not busy)
+
+    def _on_export_ani_finished(self):
+        """导出页切换动画结束：切回占位页时恢复主界面。"""
+        if self.export_stack.currentIndex() != 0:
+            return
+        self.export_stack.hide()
+        self.navigationInterface.show()
+        self.stackedWidget.show()
+        self.title_back_btn.hide()
+        logger.info("已退出视频导出页面")
 
     def _sync_all_pages(self):
         """同步所有页面数据。"""
@@ -289,7 +408,7 @@ class MainWindow(FluentWindow):
             if hasattr(page, "sync_all_from_settings"):
                 page.sync_all_from_settings()
 
-    def _launch_player(self, ust_info: dict):
+    def _launch_player(self, ustx_info: dict):
         """启动播放器并保持引用。如有旧窗口则先关闭。"""
         # 关闭旧播放器窗口
         if self._player_window is not None and self._player_window.isVisible():
@@ -297,14 +416,15 @@ class MainWindow(FluentWindow):
             self._player_window.close()
             self._player_window = None
 
-        sc = ust_info["show_config"]
+        sc = ustx_info["show_config"]
         logger.info(
             f"正在启动播放器 — curve_show={sc['curve_show']}, "
             f"bpm={sc['bpm']}, lyric={sc['lyric']}, "
-            f"fullscreen={ust_info['player_style']['fullscreen']}"
+            f"fullscreen={ustx_info['player_style']['fullscreen']}"
         )
         try:
-            self._player_window = display(ust_info)
+            from core.ustxplayer import display
+            self._player_window = display(ustx_info)
             logger.info("播放器窗口已显示")
         except Exception:
             logger.exception("播放器启动失败")
@@ -312,10 +432,12 @@ class MainWindow(FluentWindow):
 
     # ===================== 拖拽支持 =====================
 
-    _VALID_EXTENSIONS = {'.ustx', '.uplr', '.mp3', '.wav', '.flac', '.lrc'}
+    _VALID_EXTENSIONS = {'.ustx', '.uprj', '.mp3', '.wav', '.flac', '.lrc'}
 
     def dragEnterEvent(self, event):
-        """仅接受合法的文件拖入。"""
+        """仅接受合法的文件拖入（导出页禁用拖拽，避免误添加文件）。"""
+        if self.export_stack.isVisible() and self.export_stack.currentIndex() != 0:
+            return
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             if urls:
@@ -324,7 +446,9 @@ class MainWindow(FluentWindow):
                     event.acceptProposedAction()
 
     def dropEvent(self, event):
-        """处理文件拖入（支持 .ustx/.uplr 文件）。"""
+        """处理文件拖入（支持 .ustx/.uprj 文件，导出页禁用）。"""
+        if self.export_stack.isVisible() and self.export_stack.currentIndex() != 0:
+            return
         urls = event.mimeData().urls()
         if not urls:
             return
@@ -340,24 +464,25 @@ class MainWindow(FluentWindow):
         self._handle_dropped_file(file_path)
 
     def _handle_dropped_file(self, file_path: str):
-        """统一处理拖入/命令行传入的文件（.ustx/.uplr/.mp3/.wav/.flac/.lrc）。
+        """统一处理拖入/命令行传入的文件（.ustx/.uprj/.mp3/.wav/.flac/.lrc）。
 
-        .uplr 加载后同步所有页面，其余仅同步 file_page。
+        .uprj 加载后同步所有页面，其余仅同步 file_page。
         """
         ext = os.path.splitext(file_path)[1].lower()
-        if ext == '.uplr':
+        if ext == '.uprj':
             # 先弹提示（动画流畅），重活儿延迟执行避免阻塞 UI 动画
             InfoBar.success("成功", f"已加载工程：{file_path}", orient=Qt.Orientation.Vertical, duration=2000,
                             parent=self, position=InfoBarPosition.TOP_RIGHT)
-            QTimer.singleShot(400, lambda: self._do_uplr_drop(file_path))
+            QTimer.singleShot(200, lambda: self._do_uprj_drop(file_path))
         elif ext in ('.mp3', '.wav', '.flac'):
-            self._settings.audio_path = file_path
+            self._settings.project.audio_path = file_path
             self._settings.write_settings()
             self.file_page.sync_all_from_settings()
             InfoBar.success("成功", "已选择音频文件", orient=Qt.Orientation.Vertical, duration=1500,
                             parent=self, position=InfoBarPosition.TOP_RIGHT)
         elif ext == '.lrc':
-            self._settings.lrc_path = file_path
+            from core.renderer_core import detect_lrc_max_languages
+            self._settings.player.lrc_path = file_path
             self._settings.write_settings()
             self.file_page.sync_all_from_settings()
             max_langs = detect_lrc_max_languages(file_path)
@@ -368,13 +493,13 @@ class MainWindow(FluentWindow):
             InfoBar.success("成功", msg, orient=Qt.Orientation.Vertical, duration=1500,
                             parent=self, position=InfoBarPosition.TOP_RIGHT)
         else:  # .ustx
-            self._settings.ustx_path = file_path
+            self._settings.project.ustx_path = file_path
             self._settings.last_open_dir = os.path.dirname(file_path)
             InfoBar.success("成功", f"已选择 USTX 文件：{file_path}", orient=Qt.Orientation.Vertical, duration=2000,
                             parent=self, position=InfoBarPosition.TOP_RIGHT)
             QTimer.singleShot(600, self._do_ustx_post_drop)
 
-    def _load_dropped_uplr(self):
+    def _load_dropped_uprj(self):
         """处理拖拽到 exe 上的文件（从命令行参数获取）。"""
         if len(sys.argv) <= 1:
             return
@@ -390,33 +515,32 @@ class MainWindow(FluentWindow):
 
     def _do_ustx_post_drop(self):
         """Toast 动画结束后执行：写配置 → 同步页面 → 启动后台解析。"""
-        # 项目名为空时自动使用 ustx 文件名（不含扩展名），在同步页面之前填充
+        # 工程名为空时自动使用 ustx 文件名（不含扩展名），在同步页面之前填充
         if self._settings.maybe_fill_project_name_from_ustx():
-            InfoBar.success("提示", f"工程名为空，已自动填充为：{self._settings.project_name}",
+            InfoBar.success("提示", f"工程名为空，已自动填充为：{self._settings.project.project_name}",
                             orient=Qt.Orientation.Vertical, duration=2000, parent=self, position=InfoBarPosition.TOP_RIGHT)
         self._settings.write_settings()
         self.file_page.sync_all_from_settings()
         self.basic_page.sync_all_from_settings()
         self.file_page._on_match()
 
-    def _do_uplr_drop(self, file_path: str):
-        """UPLR 拖入延迟执行：导入 → 写配置 → 同步页面 → 后台解析 USTX。
+    def _do_uprj_drop(self, file_path: str):
+        """UPRJ 拖入延迟执行：导入 → 写配置 → 同步页面 → 应用内嵌解析数据。
 
-        在 InfoBar 动画播放完毕后执行，避免 import_uplr 的 JSON 反序列化、
-        缓存写入等操作阻塞 UI 动画。
+        在 InfoBar 动画播放完毕后执行，避免 import_uprj 的 JSON 反序列化阻塞 UI 动画。
         """
         try:
-            self._settings.import_uplr(file_path, parse_ustx=False)
+            self._settings.import_uprj(file_path, parse_ustx=False)
             self._settings.last_open_dir = os.path.dirname(file_path)
             self._settings.write_settings()
             self._sync_all_pages()
-            self.file_page._on_match()
+            self.file_page.apply_embedded_ustx_data()
         except ProjectFileMissingError as e:
             # 配置已加载到内存，仅文件路径无效：同步 UI 供用户重新选择文件
             self._settings.last_open_dir = os.path.dirname(file_path)
             self._settings.write_settings()
             self._sync_all_pages()
-            self.file_page._on_match()
+            self.file_page.apply_embedded_ustx_data()
             InfoBar.error("ERcode006", f"工程已加载，但以下文件路径无效：\n{e}",
                           orient=Qt.Orientation.Vertical, duration=5000, parent=self, position=InfoBarPosition.TOP_RIGHT)
         except Exception as e:
@@ -442,9 +566,11 @@ class MainWindow(FluentWindow):
     def changeEvent(self, event: QEvent):
         """窗口激活状态变化时清理残留 tooltip。"""
         super().changeEvent(event)
-        if event.type() == QEvent.Type.WindowDeactivate:
+        # ActivationChange 是控件收到的激活状态变化事件（WindowDeactivate 发给原生窗口句柄）
+        if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowDeactivate):
             # 窗口失活时 qfluentwidgets 的导航 tooltip 不会自动隐藏
-            self._hide_orphan_tooltips()
+            if not self.isActiveWindow():
+                self._hide_orphan_tooltips()
 
     def _hide_orphan_tooltips(self):
         """隐藏可能残留的 qfluentwidgets 导航 tooltip。
@@ -455,6 +581,26 @@ class MainWindow(FluentWindow):
         for child in self.findChildren(QWidget):
             if type(child).__name__ == "ToolTip" and "qfluentwidgets" in type(child).__module__:
                 child.hide()
+
+
+def _patch_tooltip_show_guard():
+    """窗口失活时 ToolTipFilter 的延迟定时器仍会触发，导致 tooltip 在非活动窗口上迟到显示。
+
+    补丁在显示前检查父窗口激活状态；与 changeEvent 的失活清理配合，覆盖
+    "已显示残留"和"失活后迟到显示"两条路径。必须在创建主窗口前调用
+    （过滤器实例化时绑定 showToolTip）。
+    """
+    _orig_show = ToolTipFilter.showToolTip
+
+    def _guarded_show(self):
+        parent = self.parent()
+        if parent is not None and parent.isWidgetType():
+            window = parent.window()
+            if window is not None and not window.isActiveWindow():
+                return
+        _orig_show(self)
+
+    ToolTipFilter.showToolTip = _guarded_show
 
 
 # ===================== 程序入口 =====================
@@ -485,6 +631,7 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("ustxPlayer")
     app.setApplicationDisplayName("ustxPlayer")
+    _patch_tooltip_show_guard()
 
     # 安装中文翻译器，汉化 qfluentwidgets 内部英文文案
     # 用局部变量持有引用：main() 阻塞在 app.exec() 直到退出，translator 存活整个应用生命周期
@@ -511,10 +658,8 @@ def main():
         logger.warning(f"Qt 中文翻译 qt_zh_CN 加载失败，目录: {translations_dir}")
 
     # 设置应用图标（确保任务栏图标正确）
-    # 与 SettingsManager.program_root 一致：基于 sys.argv[0]
-    program_root = os.path.dirname(os.path.abspath(sys.argv[0]))
-    icon_path = os.path.join(program_root, "icon.ico")
-    if os.path.exists(icon_path):
+    icon_path = resolve_icon_path(None)
+    if icon_path:
         app.setWindowIcon(QIcon(icon_path))
 
     logger.info("正在创建主窗口...")
@@ -522,9 +667,8 @@ def main():
     window.show()
     logger.info("主窗口已显示")
 
-    # 退出时清理：先停止 file_page 后台解析线程，再清空缓存目录
+    # 退出时清理：停止 file_page 后台解析线程
     app.aboutToQuit.connect(window.file_page.cleanup_parse_thread)
-    app.aboutToQuit.connect(window._settings.clear_cache)
 
     sys.exit(app.exec())
 

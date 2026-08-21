@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg id="_图层_1" data-name="图层_1" xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 1273 1273">
+  <!-- Generator: Adobe Illustrator 30.6.0, SVG Export Plug-In . SVG Version: 2.1.4 Build 109)  -->
+  <defs>
+    <radialGradient id="bgGradient" cx="50%" cy="50%" r="80%">
+      <stop offset="0%" stop-color="#fcfdf8"/>
+      <stop offset="35%" stop-color="#f7f9f1"/>
+      <stop offset="70%" stop-color="#f0f4e8"/>
+      <stop offset="100%" stop-color="#ecf0e4"/>
+    </radialGradient>
+    <style>
+      .st0 {
+        fill: #3a5a38;
+        font-size: 630px;
+      }
+
+      .st0, .st1 {
+        font-family: DengXian-Bold, DengXian;
+        font-weight: 700;
+        isolation: isolate;
+      }
+
+      .st1 {
+        fill: #a8c0a0;
+        font-size: 910px;
+      }
+    </style>
+  </defs>
+  <rect width="1273" height="1273" rx="240" ry="240" fill="url(#bgGradient)"/>
+  <text class="st1" transform="translate(88.18 924.86)"><tspan x="0" y="0">C4</tspan></text>
+  <text class="st0" transform="translate(329.5 818.23)"><tspan x="0" y="0">あ</tspan></text>
+</svg>

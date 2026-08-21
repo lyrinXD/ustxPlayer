@@ -12,13 +12,14 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase, QFontMetrics
 
 from qfluentwidgets import (
     LineEdit, ComboBox, ColorPickerButton, PushButton, CheckBox,
-    BodyLabel, StrongBodyLabel, HorizontalSeparator,
+    BodyLabel,
     InfoBar, InfoBarPosition,
 )
 from qfluentwidgets.components.widgets.combo_box import ComboBoxMenu
 from qfluentwidgets.components.widgets.menu import MenuAnimationType
 
 from core.settings_manager import SettingsManager
+from ui.accent_card import AccentHeaderCardWidget, PAGE_MARGIN, PAGE_SPACING
 
 # 样式对应的四个颜色键
 STYLE_COLOR_KEYS = ["bg_color", "note_color", "lyric_color", "pitch_curve_color"]
@@ -81,31 +82,36 @@ class PlayerStylePage(QWidget):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(24, 20, 24, 20)
-        layout.setSpacing(10)
+        layout.setContentsMargins(*PAGE_MARGIN)
+        layout.setSpacing(PAGE_SPACING)
 
-        # ========== 全局背景 ==========
-        layout.addWidget(StrongBodyLabel("/ 全局背景"))
+        # ========== 全局背景卡片 ==========
+        bg_card = AccentHeaderCardWidget("全局背景")
+        bg_vbox = QVBoxLayout()
+        bg_vbox.setSpacing(8)
         row_global = QHBoxLayout()
         row_global.setSpacing(8)
         row_global.addWidget(BodyLabel("统一背景色:"))
         self.global_bg_edit = LineEdit()
-        self.global_bg_edit.setText(self._s.global_bg_color)
+        self.global_bg_edit.setText(self._s.color.global_bg_color)
         self.global_bg_edit.setMaximumWidth(100)
         row_global.addWidget(self.global_bg_edit)
         self.global_bg_picker = ColorPickerButton(
-            QColor(self._s.global_bg_color), "选择全局背景色", self
+            QColor(self._s.color.global_bg_color), "全局背景色", self
         )
         row_global.addWidget(self.global_bg_picker)
         self.global_bg_check = CheckBox("应用到所有样式")
-        self.global_bg_check.setChecked(self._s.global_bg_enabled)
+        self.global_bg_check.setChecked(self._s.color.global_bg_enabled)
         row_global.addWidget(self.global_bg_check)
         row_global.addStretch()
-        layout.addLayout(row_global)
-        layout.addWidget(HorizontalSeparator())
+        bg_vbox.addLayout(row_global)
+        bg_card.viewLayout.addLayout(bg_vbox)
+        layout.addWidget(bg_card)
 
-        # ========== 颜色样式 ==========
-        layout.addWidget(StrongBodyLabel("/ 颜色样式"))
+        # ========== 颜色样式卡片 ==========
+        style_card = AccentHeaderCardWidget("颜色样式")
+        style_vbox = QVBoxLayout()
+        style_vbox.setSpacing(8)
 
         # 样式选择 + 新建按钮
         row_style = QHBoxLayout()
@@ -119,21 +125,23 @@ class PlayerStylePage(QWidget):
         self.delete_style_btn = PushButton("删除样式")
         row_style.addWidget(self.delete_style_btn)
         row_style.addStretch()
-        layout.addLayout(row_style)
+        style_vbox.addLayout(row_style)
 
         # 当前样式的 4 个颜色编辑区
         for key in STYLE_COLOR_KEYS:
-            self._add_color_row(layout, STYLE_COLOR_LABELS[key], key)
+            self._add_color_row(style_vbox, STYLE_COLOR_LABELS[key], key)
+        style_card.viewLayout.addLayout(style_vbox)
+        layout.addWidget(style_card)
 
-        layout.addWidget(HorizontalSeparator())
-
-        # ========== 显示设置 ==========
-        layout.addWidget(StrongBodyLabel("/ 显示设置"))
+        # ========== 显示设置卡片 ==========
+        display_card = AccentHeaderCardWidget("显示设置")
+        display_vbox = QVBoxLayout()
+        display_vbox.setSpacing(8)
 
         # 逐字歌词字体（显示设置最上方，控制播放器中央大字）
         self._builtin_fonts = ["等线", "微软雅黑", "黑体", "得意黑"]
-        self.word_lyric_font_combo = self._add_font_row(layout, "逐字歌词字体:")
-        self.word_lyric_font_combo.setCurrentText(self._s.word_lyric_font_family)
+        self.word_lyric_font_combo = self._add_font_row(display_vbox, "逐字歌词字体:")
+        self.word_lyric_font_combo.setCurrentText(self._s.player.word_lyric_font_family)
 
         # 歌词位置
         row_lyric = QHBoxLayout()
@@ -141,33 +149,35 @@ class PlayerStylePage(QWidget):
         row_lyric.addWidget(BodyLabel("歌词位置:"))
         self.lyric_pos_combo = ComboBox()
         self.lyric_pos_combo.addItems(["上", "下"])
-        self.lyric_pos_combo.setCurrentText(self._s.lyric_pos)
+        self.lyric_pos_combo.setCurrentText(self._s.player.lyric_pos)
         row_lyric.addWidget(self.lyric_pos_combo)
         row_lyric.addStretch()
-        layout.addLayout(row_lyric)
+        display_vbox.addLayout(row_lyric)
 
         # 歌词及信息字体（歌词位置下方，控制 LRC 歌词、音名、BPM、时间、版权等）
-        self.info_font_combo = self._add_font_row(layout, "歌词及信息字体:")
-        self.info_font_combo.setCurrentText(self._s.info_font_family)
+        self.info_font_combo = self._add_font_row(display_vbox, "歌词及信息字体:")
+        self.info_font_combo.setCurrentText(self._s.player.info_font_family)
 
         # 歌词及信息颜色（独立于样式，默认白色）
-        self._add_color_row(layout, "歌词及信息颜色:", "info_text_color")
+        self._add_color_row(display_vbox, "歌词及信息颜色:", "info_text_color")
 
         self._add_combo_with_custom(
-            layout, "音高间占位符:", "pitch_placeholder",
+            display_vbox, "音高间占位符:", "pitch_placeholder",
             ["无", "-", "自定义文字"],
-            self._s.pitch_placeholder, "pitch_custom",
+            self._s.player.pitch_placeholder, "pitch_custom",
         )
         self._add_combo_with_custom(
-            layout, "静默时显示:", "silent_display",
+            display_vbox, "静默时显示:", "silent_display",
             ["R", "♪", "-", "自定义文字", "什么都不显示"],
-            self._s.silent_display, "silent_custom",
+            self._s.player.silent_display, "silent_custom",
         )
         self._add_combo_with_custom(
-            layout, "结束时显示:", "end_display",
+            display_vbox, "结束时显示:", "end_display",
             ["END", "-", "自定义文字", "什么都不显示"],
-            self._s.end_display, "end_custom",
+            self._s.player.end_display, "end_custom",
         )
+        display_card.viewLayout.addLayout(display_vbox)
+        layout.addWidget(display_card)
 
         layout.addStretch()
 
@@ -179,7 +189,7 @@ class PlayerStylePage(QWidget):
         edit.setMaximumWidth(100)
         self._color_edits[key] = edit
         row.addWidget(edit)
-        picker = ColorPickerButton(QColor("#ffffff"), f"选择{label}", self)
+        picker = ColorPickerButton(QColor("#ffffff"), label, self)
         self._color_pickers[key] = picker
         row.addWidget(picker)
         row.addStretch()
@@ -241,7 +251,7 @@ class PlayerStylePage(QWidget):
 
         # ---- 显示设置 ----
         self.lyric_pos_combo.currentTextChanged.connect(
-            lambda v: setattr(s, "lyric_pos", v)
+            lambda v: setattr(s.player, "lyric_pos", v)
         )
         # textActivated 仅用户手动选择触发，避免 sync 时 setCurrentText 引发多余写入
         self.word_lyric_font_combo.textActivated.connect(
@@ -260,15 +270,15 @@ class PlayerStylePage(QWidget):
             edit = getattr(self, f"edit_{attr_name}", None)
             if edit:
                 prop_name = f"{attr_name}_text"
-                current = getattr(s, prop_name, "")
+                current = getattr(s.player, prop_name, "")
                 edit.setText(current)
                 edit.textChanged.connect(
-                    lambda v, pn=prop_name: setattr(s, pn, v)
+                    lambda v, pn=prop_name: setattr(s.player, pn, v)
                 )
 
         # ---- Settings 数据变更 → UI 刷新 ----
         # 样式增删由 _on_new_style / _on_delete_style 单独处理，不在 styles_changed 全量刷新颜色字段
-        s.active_style_index_changed.connect(self._on_active_style_changed_external)
+        s.style.active_style_index_changed.connect(self._on_active_style_changed_external)
 
     def _bind_color_pair(self, edit, picker, setter):
         """通用颜色 Edit+Picker 双向绑定。
@@ -298,11 +308,11 @@ class PlayerStylePage(QWidget):
         s = self._s
         self._bind_color_pair(
             self.global_bg_edit, self.global_bg_picker,
-            lambda v: setattr(s, "global_bg_color", v),
+            lambda v: setattr(s.color, "global_bg_color", v),
         )
         # qfluentwidgets CheckBox 的 stateChanged 可能不触发，统一用 checkStateChanged
         self.global_bg_check.checkStateChanged.connect(
-            lambda st: setattr(s, "global_bg_enabled", st == Qt.CheckState.Checked)
+            lambda st: setattr(s.color, "global_bg_enabled", st == Qt.CheckState.Checked)
         )
 
     def _bind_simple_color(self, key: str):
@@ -313,11 +323,11 @@ class PlayerStylePage(QWidget):
             return
         s = self._s
         # 初始化控件值
-        init_val = getattr(s, key, "#ffffff")
+        init_val = getattr(s.color, key, "#ffffff")
         edit.setText(init_val)
         picker.setColor(QColor(init_val))
         self._bind_color_pair(
-            edit, picker, lambda v, k=key: setattr(s, k, v),
+            edit, picker, lambda v, k=key: setattr(s.color, k, v),
         )
 
     def _bind_style_color(self, key: str):
@@ -327,7 +337,7 @@ class PlayerStylePage(QWidget):
         s = self._s
 
         def setter(v):
-            s.set_style_color(s.active_style_index, key, v)
+            s.style.set_style_color(s.style.active_style_index, key, v)
 
         self._bind_color_pair(edit, picker, setter)
 
@@ -335,11 +345,11 @@ class PlayerStylePage(QWidget):
         combo = getattr(self, f"combo_{attr}")
         custom_edit = getattr(self, f"edit_{custom_attr}")
 
-        current_val = getattr(self._s, attr)
+        current_val = getattr(self._s.player, attr)
         combo.setCurrentText(current_val)
 
         def on_change(value):
-            setattr(self._s, attr, value)
+            setattr(self._s.player, attr, value)
             custom_edit.setVisible(value == "自定义文字")
 
         combo.currentTextChanged.connect(on_change)
@@ -354,11 +364,11 @@ class PlayerStylePage(QWidget):
         """
         if text == "自定义...":
             combo.blockSignals(True)
-            combo.setCurrentText(getattr(self._s, attr))
+            combo.setCurrentText(getattr(self._s.player, attr))
             combo.blockSignals(False)
             QTimer.singleShot(0, lambda: self._open_font_dialog(combo, attr))
             return
-        setattr(self._s, attr, text)
+        setattr(self._s.player, attr, text)
         # 缺失字体会被 Qt 静默回退，此处检测并提示
         if not QFontDatabase.hasFamily(text):
             InfoBar.warning(
@@ -414,7 +424,7 @@ class PlayerStylePage(QWidget):
     def _load_custom_font(self, combo: ComboBox, attr: str, file_path: str):
         """加载自定义字体文件并同步到两个字体选择框，路径记入工程文件。
 
-        路径写入 settings.custom_font_paths，导出 .uplr 时随之保存。
+        路径写入 settings.custom_font_paths，导出 .uprj 时随之保存。
         """
         family = self._apply_custom_font(file_path)
         if family is None:
@@ -422,15 +432,15 @@ class PlayerStylePage(QWidget):
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
             return
         combo.setCurrentText(family)
-        setattr(self._s, attr, family)
+        setattr(self._s.player, attr, family)
         # 路径记入工程文件（去重）
-        if file_path not in self._s.custom_font_paths:
-            self._s.custom_font_paths = self._s.custom_font_paths + [file_path]
+        if file_path not in self._s.player.custom_font_paths:
+            self._s.player.custom_font_paths = self._s.player.custom_font_paths + [file_path]
 
     def restore_custom_fonts(self):
         """根据 settings.custom_font_paths 重建两个选择框的自定义字体项。
 
-        导入 .uplr 后由 sync_all_from_settings 调用：先清理旧的自定义字体项
+        导入 .uprj 后由 sync_all_from_settings 调用：先清理旧的自定义字体项
         （保留内置字体与"自定义..."），再按路径重新加载并插入。
         """
         builtin = set(self._builtin_fonts) | {"自定义..."}
@@ -440,7 +450,7 @@ class PlayerStylePage(QWidget):
                 if c.itemText(i) not in builtin:
                     c.removeItem(i)
         # 重新加载当前工程的自定义字体
-        for path in self._s.custom_font_paths:
+        for path in self._s.player.custom_font_paths:
             self._apply_custom_font(path)
 
     # ===================== 样式操作 =====================
@@ -449,26 +459,26 @@ class PlayerStylePage(QWidget):
         """刷新样式下拉框的选项列表。"""
         self.style_combo.blockSignals(True)
         self.style_combo.clear()
-        for i in range(self._s.style_count):
+        for i in range(self._s.style.style_count):
             self.style_combo.addItem(f"样式{i + 1}")
-        self.style_combo.setCurrentIndex(self._s.active_style_index)
+        self.style_combo.setCurrentIndex(self._s.style.active_style_index)
         self.style_combo.blockSignals(False)
 
     def _on_style_switched(self, index: int):
         """用户在 UI 切换样式下拉框。"""
-        if index < 0 or index >= self._s.style_count:
+        if index < 0 or index >= self._s.style.style_count:
             return
         if self._updating_style:
             return
         self._updating_style = True
         try:
-            self._s.active_style_index = index
+            self._s.style.active_style_index = index
             self._load_style_colors(index)
         finally:
             self._updating_style = False
 
     def _on_active_style_changed_external(self, index: int):
-        """外部（如 import_uplr）修改了 active_style_index。"""
+        """外部（如 import_uprj）修改了 active_style_index。"""
         if self._updating_style:
             return
         self._updating_style = True
@@ -483,32 +493,32 @@ class PlayerStylePage(QWidget):
 
     def _on_new_style(self):
         """新建样式（复制样式1颜色，命名为样式N）。"""
-        new_idx = self._s.add_style()
+        new_idx = self._s.style.add_style()
         self._refresh_style_combo()
-        self._s.active_style_index = new_idx
+        self._s.style.active_style_index = new_idx
         self.style_combo.setCurrentIndex(new_idx)
         self._load_style_colors(new_idx)
 
     def _on_delete_style(self):
         """删除当前选中的样式（前3个默认样式不可删除）。"""
-        idx = self._s.active_style_index
+        idx = self._s.style.active_style_index
         if idx < 3:
             InfoBar.warning(
                 "提示", "默认样式不可删除（样式1-3）",
                 orient=Qt.Orientation.Vertical, duration=2000, parent=self.window(),
             )
             return
-        success = self._s.remove_style(idx)
+        success = self._s.style.remove_style(idx)
         if success:
             self._refresh_style_combo()
-            self.style_combo.setCurrentIndex(self._s.active_style_index)
-            self._load_style_colors(self._s.active_style_index)
+            self.style_combo.setCurrentIndex(self._s.style.active_style_index)
+            self._load_style_colors(self._s.style.active_style_index)
 
     def _load_style_colors(self, index: int):
         """将指定样式的颜色加载到 UI 控件中。"""
-        if index < 0 or index >= self._s.style_count:
+        if index < 0 or index >= self._s.style.style_count:
             return
-        style = self._s.styles[index]
+        style = self._s.style.styles[index]
         for key in STYLE_COLOR_KEYS:
             color = style.get(key, "#ffffff")
             edit = self._color_edits.get(key)
@@ -532,16 +542,16 @@ class PlayerStylePage(QWidget):
 
         # 全局背景
         self.global_bg_edit.blockSignals(True)
-        self.global_bg_edit.setText(s.global_bg_color)
+        self.global_bg_edit.setText(s.color.global_bg_color)
         self.global_bg_edit.blockSignals(False)
         self.global_bg_picker.blockSignals(True)
-        c = QColor(s.global_bg_color)
+        c = QColor(s.color.global_bg_color)
         if c.isValid():
             self.global_bg_picker.setColor(c)
         self.global_bg_picker.blockSignals(False)
         # blockSignals 避免 setChecked 反向写回 settings
         self.global_bg_check.blockSignals(True)
-        self.global_bg_check.setChecked(s.global_bg_enabled)
+        self.global_bg_check.setChecked(s.color.global_bg_enabled)
         self.global_bg_check.blockSignals(False)
 
         # LRC 歌词颜色（独立于样式）
@@ -549,24 +559,24 @@ class PlayerStylePage(QWidget):
         picker_info = self._color_pickers.get("info_text_color")
         if edit_info and picker_info:
             edit_info.blockSignals(True)
-            edit_info.setText(s.info_text_color)
+            edit_info.setText(s.color.info_text_color)
             edit_info.blockSignals(False)
             picker_info.blockSignals(True)
-            c = QColor(s.info_text_color)
+            c = QColor(s.color.info_text_color)
             if c.isValid():
                 picker_info.setColor(c)
             picker_info.blockSignals(False)
 
         # 样式下拉框 & 颜色
         self._refresh_style_combo()
-        self._load_style_colors(s.active_style_index)
+        self._load_style_colors(s.style.active_style_index)
 
         # 显示设置
-        self.lyric_pos_combo.setCurrentText(s.lyric_pos)
+        self.lyric_pos_combo.setCurrentText(s.player.lyric_pos)
         # 须在 setCurrentText 之前恢复自定义字体项，否则 family 不在列表无法选中
         self.restore_custom_fonts()
-        self.word_lyric_font_combo.setCurrentText(s.word_lyric_font_family)
-        self.info_font_combo.setCurrentText(s.info_font_family)
+        self.word_lyric_font_combo.setCurrentText(s.player.word_lyric_font_family)
+        self.info_font_combo.setCurrentText(s.player.info_font_family)
 
         for attr, custom_attr in [
             ("pitch_placeholder", "pitch_custom"),
@@ -574,7 +584,7 @@ class PlayerStylePage(QWidget):
             ("end_display", "end_custom"),
         ]:
             combo = getattr(self, f"combo_{attr}")
-            combo.setCurrentText(getattr(s, attr))
+            combo.setCurrentText(getattr(s.player, attr))
             edit = getattr(self, f"edit_{custom_attr}")
-            edit.setText(getattr(s, f"{custom_attr}_text"))
-            edit.setVisible(getattr(s, attr) == "自定义文字")
+            edit.setText(getattr(s.player, f"{custom_attr}_text"))
+            edit.setVisible(getattr(s.player, attr) == "自定义文字")

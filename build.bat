@@ -40,6 +40,22 @@ echo.
 echo [2/3] Locating PySide6 multimedia plugins...
 for /f "delims=" %%i in ('%PYTHON% -c "import PySide6,os;print(os.path.dirname(PySide6.__file__))"') do set PYSIDE6_DIR=%%i
 set MM_PLUGINS=%PYSIDE6_DIR%\plugins\multimedia
+REM PyAV ships .py/.pyd twins which crash the Nuitka 4.1.3 optimizer.
+REM Stage a cleaned copy (extension modules only) and build against it.
+for /f "delims=" %%i in ('%PYTHON% -c "import av,os;print(os.path.dirname(os.path.dirname(av.__file__)))"') do set AV_SITE_DIR=%%i
+set AV_STAGE=%TEMP%\ustxplayer_av_stage
+if exist "%AV_STAGE%" rmdir /s /q "%AV_STAGE%"
+mkdir "%AV_STAGE%"
+xcopy /e /i /q /y "%AV_SITE_DIR%\av" "%AV_STAGE%\av" >nul
+xcopy /e /i /q /y "%AV_SITE_DIR%\av.libs" "%AV_STAGE%\av.libs" >nul
+for /r "%AV_STAGE%\av" %%f in (*.py) do (
+    if not "%%~nf"=="__init__" if exist "%%~dpnf.pyd" del "%%f" >nul
+)
+if defined PYTHONPATH (
+    set PYTHONPATH=%AV_STAGE%;%PYTHONPATH%
+) else (
+    set PYTHONPATH=%AV_STAGE%
+)
 
 if not exist "%MM_PLUGINS%\ffmpegmediaplugin.dll" (
     echo ERROR: PySide6 multimedia plugins not found!
@@ -56,6 +72,11 @@ echo.
 echo [3/3] Starting compilation (first run may take 10-20 mins)...
 echo.
 
+REM Read version from VERSION file (single source of truth, shared with renderer_core/other_page)
+set /p APP_VERSION=<VERSION
+echo  Version:  %APP_VERSION%
+echo.
+
 REM Build command
 REM Exclude large unused deps pulled in transitively by qfluentwidgets[full]:
 REM   scipy / pandas / matplotlib / sklearn / PIL / numpy / pytest / PyInstaller
@@ -66,12 +87,14 @@ REM   scipy / pandas / matplotlib / sklearn / PIL / numpy / pytest / PyInstaller
     --include-package-data=qfluentwidgets ^
     --include-package=qframelesswindow ^
     --include-package-data=qframelesswindow ^
+    --include-package=av ^
     --include-package=yaml ^
     --include-package=win32api ^
     --include-package=win32gui ^
     --include-package=win32print ^
-    --include-data-files="icon.ico=icon.ico" ^
-    --include-data-files="Terms.txt=Terms.txt" ^
+    --include-data-dir="icons=icons" ^
+    --include-data-files="LICENSE=LICENSE" ^
+    --include-data-files="VERSION=VERSION" ^
     --include-data-files="%MM_PLUGINS%\ffmpegmediaplugin.dll=PySide6/qt-plugins/multimedia/ffmpegmediaplugin.dll" ^
     --include-data-files="%MM_PLUGINS%\windowsmediaplugin.dll=PySide6/qt-plugins/multimedia/windowsmediaplugin.dll" ^
     --include-data-files="%PYSIDE6_DIR%\avcodec-61.dll=avcodec-61.dll" ^
@@ -130,15 +153,25 @@ REM   scipy / pandas / matplotlib / sklearn / PIL / numpy / pytest / PyInstaller
     --nofollow-import-to=numpy ^
     --nofollow-import-to=pytest ^
     --nofollow-import-to=PyInstaller ^
-    --noinclude-data-files="PySide6/qt-plugins/imageformats/qpdf.dll=PySide6/qt-plugins/imageformats/qpdf.dll" ^
-    --noinclude-data-files="PySide6/qt6pdf.dll=PySide6/qt6pdf.dll" ^
-    --windows-icon-from-ico="icon.ico" ^
+    --noinclude-dlls=*qt6pdf.dll ^
+    --noinclude-dlls=*qpdf.dll ^
+    --noinclude-dlls=*qdirect2d.dll ^
+    --noinclude-dlls=*qminimal.dll ^
+    --noinclude-dlls=*qoffscreen.dll ^
+    --noinclude-dlls=*qgif.dll ^
+    --noinclude-dlls=*qicns.dll ^
+    --noinclude-dlls=*qjpeg.dll ^
+    --noinclude-dlls=*qtga.dll ^
+    --noinclude-dlls=*qtiff.dll ^
+    --noinclude-dlls=*qwbmp.dll ^
+    --noinclude-dlls=*qwebp.dll ^
+    --windows-icon-from-ico="icons\icon_a.ico" ^
     --windows-console-mode=disable ^
     --output-dir=dist ^
     --company-name="lyrinXD" ^
     --product-name="ustxPlayer" ^
-    --file-version=26.30.0 ^
-    --product-version=26.30.0 ^
+    --file-version=%APP_VERSION% ^
+    --product-version=%APP_VERSION% ^
     --file-description="ustxPlayer - USTX project visualizer" ^
     --output-filename="ustxPlayer.exe" ^
     --remove-output ^
@@ -169,5 +202,14 @@ if exist "dist\main.dist" (
 
 echo  Output: dist\ustxPlayer.dist\
 echo  Binary: dist\ustxPlayer.dist\ustxPlayer.exe
+echo.
+
+REM Bundle ffmpeg for video export (optional but recommended)
+if exist "tools\ffmpeg\ffmpeg.exe" (
+    copy /y "tools\ffmpeg\ffmpeg.exe" "dist\ustxPlayer.dist\ffmpeg.exe" >nul
+    echo  ffmpeg.exe bundled
+) else (
+    echo  WARNING: tools\ffmpeg\ffmpeg.exe not found - video export will be unavailable
+)
 echo.
 pause

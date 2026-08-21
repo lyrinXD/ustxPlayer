@@ -28,8 +28,13 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Union[str, float, int, List[Dict]
         dict:
             version (str):   USTX 版本号
             tempo (float):   速度 (BPM)
-            tracks (int):    轨道数
-            notes (list):    音符列表 [{index, length, lyric, note_num, pitch_bend}]
+            tempo_count (int): tempo 标记数量（>1 表示歌内有变速）
+            tracks (int):    轨道总数（含音频轨）
+            tracks_info (list): 人声轨列表 [{track_no, track_name, note_count}]（仅含音符的轨）
+            empty_tracks (list): 空人声轨列表 [{track_no, track_name, note_count:0}]
+            wave_part_count (int): wave_parts（音频轨）数量
+            notes (list):    音符列表 [{index, position, length, lyric, note_num,
+                              track_no, pitch_bend}]
 
     Raises:
         FileNotFoundError: USTX 文件不存在
@@ -44,14 +49,39 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Union[str, float, int, List[Dict]
         data = {}
 
     ustx_version = data.get('ustx_version', 'unknown')
-    ustx_tempo = float(data.get('bpm', 120.0))
-    ustx_tracks = max(1, len(data.get('tracks', [])))
+    # BPM：OpenUTAU v0.9+ 把 tempo 存在根级 tempos 列表（UTempo{position,bpm}），
+    # 根级 bpm 是 v0.6 前的遗留字段，改 BPM 后不再同步（恒为旧值），必须优先读 tempos。
+    tempos = data.get('tempos') or []
+    if tempos and isinstance(tempos[0], dict):
+        ustx_tempo = float(tempos[0].get('bpm', 120.0))
+    else:
+        ustx_tempo = float(data.get('bpm', 120.0))
+    raw_tracks = data.get('tracks', []) or []
+    ustx_tracks = max(1, len(raw_tracks))
+    # 音频轨（wave_parts）可能未计入 tracks 列表，用其轨道号补齐总轨道数
+    wave_track_nos = {
+        int(p.get('track_no', 0) or 0)
+        for p in (data.get('wave_parts') or [])
+        if isinstance(p, dict)
+    }
+    if wave_track_nos:
+        ustx_tracks = max(ustx_tracks, max(wave_track_nos) + 1)
+    # 轨道名映射：track_name 是 OpenUtau 字段，旧文件可能缺失，回退"轨道 N"
+    track_names: Dict[int, str] = {}
+    for idx, t in enumerate(raw_tracks):
+        if isinstance(t, dict):
+            track_names[idx] = t.get('track_name') or t.get('name') or f"轨道 {idx + 1}"
+        else:
+            track_names[idx] = f"轨道 {idx + 1}"
 
     note_list: List[Dict] = []
+    track_note_counts: Dict[int, int] = {}
+    note_global_idx = 0
 
     voice_parts = data.get('voice_parts', [])
     for part in voice_parts:
         part_pos = part.get('position', 0)
+        track_no = int(part.get('track_no', 0) or 0)
         notes = part.get('notes', [])
 
         # 从 voice_part.curves 提取 pitd（pitch deviation）曲线数据
@@ -71,41 +101,78 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Union[str, float, int, List[Dict]
             tick_pitch[int(x)] = int(y)
         sorted_ticks = sorted(tick_pitch.keys())
 
-        for i, note in enumerate(notes):
+        for note in notes:
             note_num = note.get('tone', 0)
             lyric = note.get('lyric', '')
+            # OpenUTAU 歌词可带语言前缀（en/、ja/ 等，语言码无法穷举，前缀后必有 /），
+            # 前缀只用于选择音源/词典，不应显示；统一按第一个 "/" 截断。
+            if '/' in lyric:
+                lyric = lyric.split('/', 1)[1]
             duration = note.get('duration', 0)
             note_pos = part_pos + note.get('position', 0)
             note_end = note_pos + duration
 
             # 从 tick_pitch 提取该音符范围内的 pitch_bend
+            # 同时记录每个数据点相对音符开头的 tick 偏移，供渲染器按真实时间映射 x 坐标
             pitch_bend: List[int] = []
+            pitch_ticks: List[int] = []
             if sorted_ticks:
                 for t in sorted_ticks:
                     if note_pos <= t <= note_end:
                         pitch_bend.append(tick_pitch[t])
-            if not pitch_bend:
-                pitch_bend = [0]
-            elif len(pitch_bend) == 1:
-                pitch_bend = pitch_bend * 2
+                        pitch_ticks.append(t - note_pos)
 
             note_list.append({
-                "index": f"{i:04d}",
+                "index": f"{note_global_idx:04d}",
                 "position": note_pos,
                 "length": duration,
                 "lyric": lyric,
                 "note_num": note_num,
+                "track_no": track_no,
                 "pitch_bend": pitch_bend,
+                "pitch_ticks": pitch_ticks,
             })
+            note_global_idx += 1
+            track_note_counts[track_no] = track_note_counts.get(track_no, 0) + 1
 
     logger.info(f"USTX 解析完成: {len(note_list)} 个音符, BPM={ustx_tempo}")
+    if track_note_counts:
+        logger.info("USTX 轨道: " + ", ".join(
+            f"{track_names.get(t, '轨道' + str(t + 1))}({c})"
+            for t, c in sorted(track_note_counts.items())
+        ))
     if note_list:
         logger.info(f"USTX 音符区间: pos={note_list[0]['position']}~{note_list[-1]['position']}, "
                     f"共 {note_list[-1]['position'] + note_list[-1]['length']} ticks")
 
+    # 仅人声轨（有音符的轨道），按轨道号排序
+    tracks_info = [
+        {
+            "track_no": t,
+            "track_name": track_names.get(t, f"轨道 {t + 1}"),
+            "note_count": track_note_counts[t],
+        }
+        for t in sorted(track_note_counts)
+    ]
+    # 空人声轨（无音符），供解析报告展示；排除音频轨（wave_parts 引用的轨道号）
+    empty_tracks = [
+        {
+            "track_no": t,
+            "track_name": track_names.get(t, f"轨道 {t + 1}"),
+            "note_count": 0,
+        }
+        for t in sorted(track_names)
+        if t not in track_note_counts and t not in wave_track_nos
+    ]
+
     return {
         "version": ustx_version,
         "tempo": ustx_tempo,
+        "tempo_count": len(tempos),
+        "tempos": tempos,
         "tracks": ustx_tracks,
+        "tracks_info": tracks_info,
+        "empty_tracks": empty_tracks,
+        "wave_part_count": len(data.get('wave_parts') or []),
         "notes": note_list,
     }

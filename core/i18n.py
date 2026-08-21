@@ -39,6 +39,8 @@ class ChineseTranslator(QTranslator):
         "Default color": "默认颜色",
         "Custom color": "自定义颜色",
         "Choose color": "选择颜色",
+        # ColorPickerButton 对话框标题前缀（setting_card.py）
+        "Choose ": "选择",
         # QPlatformTheme / QFileDialog 标准对话框文案兜底
         "Open": "打开",
         "Save": "保存",

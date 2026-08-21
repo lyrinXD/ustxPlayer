@@ -198,18 +198,6 @@ cython_debug/
 #  Cursor is an AI-powered code editor. `.cursorignore` specifies files/directories to
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data
 #  refer to https://docs.cursor.com/context/ignore-files
-
-# ============ ustxPlayer specific ============
-
-# 用户设置（含本地路径等隐私信息）
-Settings.ini
-
-# 构建输出
-dist/
-build/
-
-# 运行时缓存
-cache/
 .cursorignore
 .cursorindexingignore
 
@@ -217,17 +205,35 @@ cache/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
-Settings.ini
 
-# 项目本地缓存（运行时生成，启动/退出时清空）
-cache/
+# ============ ustxPlayer specific ============
+
+# 用户设置（含本地路径等隐私信息）
+Settings.ini
+Settings.json
+
+# 构建输出（与上方 GitHub 模板的 build/ dist/ 一致，显式再写一次防漏）
+dist/
+build/
+
+# Releases 目录（已经在GitHub上完成发布的版本）
+Releases/
+
+# 打包用的第三方工具（视频导出依赖 ffmpeg/ffprobe，二进制不入库）
+tools/
 
 # Nuitka 项目缓存
 .nuitka-cache/
 .nuitka-module-cache/
 
-# 旧版参考副本，不参与构建与分析
-原项目/
+# 旧版参考副本及临时文件，不参与构建与分析
+参考文件/
+
+# 应用图标（原稿及草稿，不上传）
+图标/
 
 # 本地 AI 代理记忆（含项目背景与修改历史，不入库）
 AGENTS.md
+
+# 贡献指南（暂无，和上游保持一致）
+CONTRIBUTING.md
