@@ -94,11 +94,13 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Union[str, float, int, List[Dict]
                 break
 
         # 构建 tick→pitch 查找表，并预排序 tick（每个 part 仅排序一次，避免每音符重复排序）
+        # 曲线 xs 是 part 内相对坐标（OpenUtau 渲染时 pitchStart 减掉 part.position 再采样），
+        # 需叠加 part_pos 转全局 tick，才能与下方转全局的 note_pos 比较。
         tick_pitch = {}
         if len(pitd_xs) != len(pitd_ys):
             logger.warning(f"pitd 曲线 xs/ys 长度不一致: {len(pitd_xs)} vs {len(pitd_ys)}，按短的截断")
         for x, y in zip(pitd_xs, pitd_ys):
-            tick_pitch[int(x)] = int(y)
+            tick_pitch[part_pos + int(x)] = int(y)
         sorted_ticks = sorted(tick_pitch.keys())
 
         for note in notes:
