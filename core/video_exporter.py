@@ -5,19 +5,18 @@
 """
 
 import os
+import sys
 import ctypes
 import functools
 import json
 import math
+import re
 import shutil
 import subprocess
 import tempfile
 import threading
 import time
 import winreg
-
-import av
-from av.video.reformatter import VideoReformatter, ColorRange
 
 from PySide6.QtCore import QObject, Signal, QThread
 from PySide6.QtGui import QImage, QPainter
@@ -42,13 +41,13 @@ FPS_OPTIONS = [30, 60]
 
 
 def find_ffmpeg() -> str:
-    """按优先级查找 ffmpeg.exe：exe 同目录 → 项目 tools\\ffmpeg → PATH。"""
-    candidates = []
-    # 打包后 exe 同目录
-    import sys
-    if getattr(sys, 'frozen', False):
-        base = os.path.dirname(os.path.abspath(sys.argv[0]))
-        candidates.append(os.path.join(base, "ffmpeg.exe"))
+    """按优先级查找 ffmpeg.exe：程序根目录 → 项目 tools\\ffmpeg → PATH。
+
+    程序根目录取 sys.argv[0] 同目录（Nuitka standalone 不设 sys.frozen，不能用它判断）。
+    """
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "ffmpeg.exe"),
+    ]
     # 开发环境项目 tools\ffmpeg
     module_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = os.path.dirname(module_dir)
@@ -62,80 +61,97 @@ def find_ffmpeg() -> str:
     return ""
 
 
-def probe_audio_duration(audio_path: str) -> float:
-    """用 PyAV 探测音频时长（秒），失败返回 0。"""
-    if not audio_path or not os.path.isfile(audio_path):
+@functools.lru_cache(maxsize=8)
+def _probe_audio_duration_cached(audio_path: str, mtime: float, size: int) -> float:
+    """用 ffmpeg 探测音频时长（秒）；缓存键含 mtime/size，文件变更后自动失效。"""
+    ffmpeg = find_ffmpeg()
+    if not ffmpeg:
         return 0.0
     try:
-        with av.open(audio_path) as container:
-            duration = container.duration
-            if not duration:
-                return 0.0
-            return duration / av.time_base
+        # 不指定输出文件，ffmpeg 必然以非零码退出，但从 stderr 读取探测结果
+        out = subprocess.run(
+            [ffmpeg, "-hide_banner", "-i", audio_path],
+            capture_output=True, timeout=10, creationflags=_NO_WINDOW_FLAGS,
+        ).stderr.decode("utf-8", errors="replace")
+        m = re.search(r"Duration: (\d+):(\d+):(\d+(?:\.\d+)?)", out)
+        if not m:
+            return 0.0
+        return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     except Exception:
-        logger.exception("PyAV 探测音频时长失败")
+        logger.exception("ffmpeg 探测音频时长失败")
     return 0.0
 
 
-def _tight_plane_bytes(plane, row_bytes: int, rows: int) -> bytes:
-    """取一个 YUV 平面按行去掉填充后的紧凑字节。"""
-    data = ctypes.string_at(plane.buffer_ptr, plane.buffer_size)
-    line_size = plane.line_size
-    if line_size == row_bytes:
-        return data[: row_bytes * rows]
-    out = bytearray(row_bytes * rows)
-    src = memoryview(data)
-    for r in range(rows):
-        start = r * row_bytes
-        out[start:start + row_bytes] = src[r * line_size:r * line_size + row_bytes]
-    return bytes(out)
+def probe_audio_duration(audio_path: str) -> float:
+    """探测音频时长（秒），失败返回 0。"""
+    if not audio_path or not os.path.isfile(audio_path):
+        return 0.0
+    try:
+        st = os.stat(audio_path)
+    except OSError:
+        return 0.0
+    return _probe_audio_duration_cached(audio_path, st.st_mtime, st.st_size)
 
 
-# libswscale 全范围（JPEG range）BT.601 转换会把中性灰的 U/V 算成 127 而不是 128
-# （系统性 -1 色度偏移，8bit 解码回来灰会偏 2~3），用查表整体 +1 补偿（255 封顶）。
-# 该补偿仅对"全范围 + BT.601 + 8bit"成立，与 ffmpeg 侧 smpte170m 标签配套。
-_UV_PLUS_ONE_TABLE = bytes(range(1, 256)) + b"\xff"
+_yuv_dll = None
+
+
+def _load_yuv_dll() -> ctypes.CDLL:
+    """加载 YUV420P 转换内核：程序根目录 → 开发环境 native\\ustx_yuv.dll。
+
+    打包后 exe 与 DLL 同级，程序根目录即 exe 目录；不能用 sys.frozen 判断
+    （Nuitka standalone 不设该属性）。
+    """
+    global _yuv_dll
+    if _yuv_dll is not None:
+        return _yuv_dll
+    module_dir = os.path.dirname(os.path.abspath(__file__))
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(sys.argv[0])), "ustx_yuv.dll"),
+        os.path.join(os.path.dirname(module_dir), "native", "ustx_yuv.dll"),
+    ]
+    for path in candidates:
+        if os.path.isfile(path):
+            dll = ctypes.WinDLL(path)
+            dll.upx_rgba_to_yuv420p.restype = ctypes.c_int
+            dll.upx_rgba_to_yuv420p.argtypes = [
+                ctypes.c_void_p, ctypes.c_ssize_t, ctypes.c_void_p,
+                ctypes.c_int, ctypes.c_int,
+            ]
+            _yuv_dll = dll
+            return dll
+    raise FileNotFoundError("视频转换组件缺失（ustx_yuv.dll），请重新安装程序")
 
 
 class Yuv420pConverter:
-    """RGBA8888 QImage → 紧凑全范围 YUV420P 字节（Y+U+V 连续，BT.601 矩阵），供 rawvideo 管道输入。
+    """RGBA8888 QImage → 紧凑全范围 BT.601 YUV420P（Y+U+V 连续），走自研 C 内核。
 
-    用持久化 VideoReformatter 复用 sws 上下文，避免每帧重建（约 7ms/次）；
-    输出全范围（dst_color_range=JPEG）：纯黑 RGB(0,0,0) 映射为 Y=0，
-    避免默认有限范围（黑=Y=16）在部分播放器按全范围解读时显示偏灰；
-    矩阵是 sws 默认 BT.601，ffmpeg 侧必须按 BT.601 打标签；
-    输出后对 U/V 平面做 +1 查表补偿（见 _UV_PLUS_ONE_TABLE），否则灰阶会偏 2~3。
+    全范围输出：纯黑 RGB(0,0,0) 映射 Y=0，与 ffmpeg 侧 -color_range full 标签配套；
+    公式为 JFIF（libjpeg/Pillow 同源）定点式，U/V 无补偿表
+    （旧 sws 路径的 +1 查表系过补偿，已随 sws 一并移除）。
     """
 
     def __init__(self, width: int, height: int):
         self._width = width
         self._height = height
-        self._src = av.VideoFrame(width, height, format="rgba")
-        self._src_linesize = self._src.planes[0].line_size
-        self._reformatter = VideoReformatter()
+        self._dll = _load_yuv_dll()
+        self._buf = ctypes.create_string_buffer(width * height * 3 // 2)
+        self._src = None  # (img, ctypes 数组)：bits() 视图转 ctypes，按 img 缓存
 
-    def convert(self, img: QImage) -> bytes:
-        bpl = img.bytesPerLine()
-        if self._src_linesize == bpl:
-            self._src.planes[0].update(img.constBits())
-        else:
-            raw = memoryview(img.constBits())
-            padded = bytearray(self._src_linesize * self._height)
-            for r in range(self._height):
-                src_off = r * bpl
-                dst_off = r * self._src_linesize
-                padded[dst_off:dst_off + bpl] = raw[src_off:src_off + bpl]
-            self._src.planes[0].update(padded)
-        yuv = self._reformatter.reformat(
-            self._src, width=self._width, height=self._height,
-            format="yuv420p", dst_color_range=ColorRange.JPEG,
+    def convert(self, img: QImage) -> memoryview:
+        # bits() 是可写 memoryview；导出全程复用同一 img，视图只需建一次
+        if self._src is None or self._src[0] is not img:
+            # bits() 返回可写 memoryview（存根标成 bytes，故再包一层 memoryview 让类型自洽）
+            mv = memoryview(img.bits())
+            self._src = (img, (ctypes.c_ubyte * mv.nbytes).from_buffer(mv))
+        rc = self._dll.upx_rgba_to_yuv420p(
+            self._src[1], img.bytesPerLine(), self._buf, self._width, self._height
         )
-        y_plane, u_plane, v_plane = yuv.planes
-        return (
-            _tight_plane_bytes(y_plane, self._width, self._height)
-            + _tight_plane_bytes(u_plane, self._width // 2, self._height // 2).translate(_UV_PLUS_ONE_TABLE)
-            + _tight_plane_bytes(v_plane, self._width // 2, self._height // 2).translate(_UV_PLUS_ONE_TABLE)
-        )
+        if rc != 0:
+            raise RuntimeError(f"YUV420P 转换失败（错误码 {rc}）")
+        # 零拷贝：直写常驻缓冲，proc.stdin.write 直接消费
+        # cast("B") 把 ctypes char 缓冲视图转成无符号字节视图（format 'c' 不可索引）
+        return memoryview(self._buf).cast("B")
 
 
 def _gpu_details_from_registry() -> list:
@@ -424,7 +440,7 @@ class VideoExporter(QObject):
         try:
             if probe_audio and audio_path and os.path.isfile(audio_path):
                 audio_duration = probe_audio_duration(audio_path)
-                logger.info(f"PyAV 音频时长: {audio_duration:.2f}s")
+                logger.info(f"ffmpeg 音频时长: {audio_duration:.2f}s")
 
             if device == "auto":
                 # 兜底路径：单飞行复用页面后台探测的结果，不会重复跑 ffmpeg
@@ -472,7 +488,7 @@ class VideoExporter(QObject):
             finally:
                 stderr_file.close()
             if proc.stdin is None:
-                self._log_ffmpeg_stderr(stderr_path)
+                self._log_ffmpeg_stderr_text(self._read_stderr_text(stderr_path))
                 self._finish(False, "无法打开 ffmpeg 输入管道")
                 return
 

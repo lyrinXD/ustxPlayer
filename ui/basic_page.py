@@ -46,6 +46,9 @@ class BasicPage(QWidget):
     def set_play_callback(self, callback: Callable):
         self._play_callback = callback
 
+    def set_export_callback(self, callback: Callable):
+        self._export_callback = callback
+
     # ===================== UI 构建 =====================
 
     def _setup_ui(self):
@@ -136,16 +139,7 @@ class BasicPage(QWidget):
         s = self._s
 
         # 初始值 → UI
-        self.edit_project_name.setText(s.project.project_name)
-        self.edit_song_name.setText(s.project.song_name)
-        self.edit_song_author.setText(s.project.song_author)
-        self.edit_ustx_author.setText(s.project.ustx_author)
-        self.sw_show_bpm.setChecked(s.display.show_bpm)
-        self.sw_show_play_time.setChecked(s.display.show_play_time)
-        self.sw_show_song_name.setChecked(s.display.show_song_name)
-        self.sw_show_song_author.setChecked(s.display.show_song_author)
-        self.sw_show_ustx_author.setChecked(s.display.show_ustx_author)
-        self.sw_show_copyright.setChecked(s.display.show_copyright)
+        self._sync_ui_from_settings()
 
         # UI → settings
         self.edit_project_name.textChanged.connect(lambda v: setattr(s.project, "project_name", v))
@@ -220,9 +214,6 @@ class BasicPage(QWidget):
     def _on_video_export(self):
         if self._export_callback:
             self._export_callback()
-
-    def set_export_callback(self, callback: Callable):
-        self._export_callback = callback
 
     def _sync_ui_from_settings(self):
         s = self._s

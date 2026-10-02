@@ -40,22 +40,6 @@ echo.
 echo [2/3] Locating PySide6 multimedia plugins...
 for /f "delims=" %%i in ('%PYTHON% -c "import PySide6,os;print(os.path.dirname(PySide6.__file__))"') do set PYSIDE6_DIR=%%i
 set MM_PLUGINS=%PYSIDE6_DIR%\plugins\multimedia
-REM PyAV ships .py/.pyd twins which crash the Nuitka 4.1.3 optimizer.
-REM Stage a cleaned copy (extension modules only) and build against it.
-for /f "delims=" %%i in ('%PYTHON% -c "import av,os;print(os.path.dirname(os.path.dirname(av.__file__)))"') do set AV_SITE_DIR=%%i
-set AV_STAGE=%TEMP%\ustxplayer_av_stage
-if exist "%AV_STAGE%" rmdir /s /q "%AV_STAGE%"
-mkdir "%AV_STAGE%"
-xcopy /e /i /q /y "%AV_SITE_DIR%\av" "%AV_STAGE%\av" >nul
-xcopy /e /i /q /y "%AV_SITE_DIR%\av.libs" "%AV_STAGE%\av.libs" >nul
-for /r "%AV_STAGE%\av" %%f in (*.py) do (
-    if not "%%~nf"=="__init__" if exist "%%~dpnf.pyd" del "%%f" >nul
-)
-if defined PYTHONPATH (
-    set PYTHONPATH=%AV_STAGE%;%PYTHONPATH%
-) else (
-    set PYTHONPATH=%AV_STAGE%
-)
 
 if not exist "%MM_PLUGINS%\ffmpegmediaplugin.dll" (
     echo ERROR: PySide6 multimedia plugins not found!
@@ -80,6 +64,8 @@ echo.
 REM Build command
 REM Exclude large unused deps pulled in transitively by qfluentwidgets[full]:
 REM   scipy / pandas / matplotlib / sklearn / PIL / numpy / pytest / PyInstaller
+REM Note: the avcodec/avformat/avutil/swresample/swscale DLLs pulled from
+REM   PySide6_DIR belong to Qt's multimedia plugin (audio playback), not to PyAV.
 %PYTHON% -m nuitka ^
     --standalone ^
     --enable-plugin=pyside6 ^
@@ -87,7 +73,6 @@ REM   scipy / pandas / matplotlib / sklearn / PIL / numpy / pytest / PyInstaller
     --include-package-data=qfluentwidgets ^
     --include-package=qframelesswindow ^
     --include-package-data=qframelesswindow ^
-    --include-package=av ^
     --include-package=yaml ^
     --include-package=win32api ^
     --include-package=win32gui ^
@@ -95,6 +80,7 @@ REM   scipy / pandas / matplotlib / sklearn / PIL / numpy / pytest / PyInstaller
     --include-data-dir="icons=icons" ^
     --include-data-files="LICENSE=LICENSE" ^
     --include-data-files="VERSION=VERSION" ^
+    --include-data-files="native\ustx_yuv.dll=ustx_yuv.dll" ^
     --include-data-files="%MM_PLUGINS%\ffmpegmediaplugin.dll=PySide6/qt-plugins/multimedia/ffmpegmediaplugin.dll" ^
     --include-data-files="%MM_PLUGINS%\windowsmediaplugin.dll=PySide6/qt-plugins/multimedia/windowsmediaplugin.dll" ^
     --include-data-files="%PYSIDE6_DIR%\avcodec-61.dll=avcodec-61.dll" ^

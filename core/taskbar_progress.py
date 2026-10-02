@@ -75,7 +75,7 @@ class TaskbarProgress:
         try:
             self._open()
             logger.info(f"任务栏进度已初始化（hwnd={self._hwnd:#x}）")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(f"任务栏进度初始化失败，功能不可用：{exc}")
             self._disable()
 
@@ -119,7 +119,7 @@ class TaskbarProgress:
         if taskbar is not None and release is not None:
             try:
                 release(taskbar)
-            except Exception:  # noqa: BLE001
+            except Exception:
                 pass
 
     def _write(self, state: int, percent: int) -> None:
@@ -133,7 +133,7 @@ class TaskbarProgress:
                     f"写入任务栏进度 hr={hr:#x}（state={state}, "
                     f"percent={percent}）")
                 raise OSError(hr, "写入任务栏进度失败")
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning(f"更新任务栏进度失败，已停用：{exc}")
             self._disable()
 
@@ -165,5 +165,5 @@ class TaskbarProgress:
     def __del__(self):
         try:
             self._disable()
-        except Exception:  # noqa: BLE001
+        except Exception:
             pass

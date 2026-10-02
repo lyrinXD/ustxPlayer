@@ -75,7 +75,7 @@ class MainWindow(FluentWindow):
 
         # 启动后同步所有页面
         QTimer.singleShot(0, self._sync_all_pages)
-        QTimer.singleShot(100, self._load_dropped_uprj)
+        QTimer.singleShot(100, self._load_startup_file)
         # 启动延迟自动检测更新（避开初始化/拖拽，后台静默，失败不提示）
         QTimer.singleShot(5000, lambda: self.other_page.check_update(auto=True))
 
@@ -333,12 +333,10 @@ class MainWindow(FluentWindow):
                     orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
                 )
                 return None
-            # get_ustx_info 返回联合类型，用 isinstance 收窄到 list 后再取 len
-            _notes = core_ustx_info.get('notes', [])
             logger.info(
                 f"解析完成 - 版本={core_ustx_info.get('version')}, "
                 f"BPM={core_ustx_info.get('tempo')}, "
-                f"音符数={len(_notes) if isinstance(_notes, list) else 0}"
+                f"音符数={len(core_ustx_info.get('notes', []))}"
             )
 
             return self._settings.build_ustx_info(core_ustx_info)
@@ -405,8 +403,7 @@ class MainWindow(FluentWindow):
         """同步所有页面数据。"""
         for page in [self.basic_page, self.file_page, self.player_style_page,
                      self.lyric_edit_page, self.other_page]:
-            if hasattr(page, "sync_all_from_settings"):
-                page.sync_all_from_settings()
+            page.sync_all_from_settings()
 
     def _launch_player(self, ustx_info: dict):
         """启动播放器并保持引用。如有旧窗口则先关闭。"""
@@ -422,13 +419,9 @@ class MainWindow(FluentWindow):
             f"bpm={sc['bpm']}, lyric={sc['lyric']}, "
             f"fullscreen={ustx_info['player_style']['fullscreen']}"
         )
-        try:
-            from core.ustxplayer import display
-            self._player_window = display(ustx_info)
-            logger.info("播放器窗口已显示")
-        except Exception:
-            logger.exception("播放器启动失败")
-            raise
+        from core.ustxplayer import display
+        self._player_window = display(ustx_info)
+        logger.info("播放器窗口已显示")
 
     # ===================== 拖拽支持 =====================
 
@@ -499,8 +492,8 @@ class MainWindow(FluentWindow):
                             parent=self, position=InfoBarPosition.TOP_RIGHT)
             QTimer.singleShot(600, self._do_ustx_post_drop)
 
-    def _load_dropped_uprj(self):
-        """处理拖拽到 exe 上的文件（从命令行参数获取）。"""
+    def _load_startup_file(self):
+        """处理命令行传入的文件（拖到 exe 图标上启动时进入 sys.argv）。"""
         if len(sys.argv) <= 1:
             return
 
@@ -558,16 +551,14 @@ class MainWindow(FluentWindow):
         # 隐藏导航栏可能残留的浮动 tooltip
         self._hide_orphan_tooltips()
         target = interface.widget() if isinstance(interface, QScrollArea) else interface
-        # target 可能为 None，用 getattr + 默认值避免静态告警
-        sync = getattr(target, "sync_all_from_settings", None)
-        if sync is not None:
-            sync()
+        # 五个导航页均已实现 sync_all_from_settings；widget() 存根标 Optional，实际不为 None
+        target.sync_all_from_settings()
 
     def changeEvent(self, event: QEvent):
         """窗口激活状态变化时清理残留 tooltip。"""
         super().changeEvent(event)
-        # ActivationChange 是控件收到的激活状态变化事件（WindowDeactivate 发给原生窗口句柄）
-        if event.type() in (QEvent.Type.ActivationChange, QEvent.Type.WindowDeactivate):
+        # 只监听 ActivationChange：WindowDeactivate 只发给原生窗口句柄，此路径从未生效
+        if event.type() == QEvent.Type.ActivationChange:
             # 窗口失活时 qfluentwidgets 的导航 tooltip 不会自动隐藏
             if not self.isActiveWindow():
                 self._hide_orphan_tooltips()

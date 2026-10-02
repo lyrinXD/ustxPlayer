@@ -169,8 +169,8 @@ class NoteLyricDisplay(QWidget):
             self._media_player.mediaStatusChanged.disconnect()
         except (TypeError, RuntimeError):
             pass
-        # 清除音频输出并释放（类型存根要求 QAudioOutput，故忽略参数类型检查）
-        self._media_player.setAudioOutput(None)  # type: ignore[arg-type]
+        # 清除音频输出并释放（PySide6 存根签名未标 Optional，但 None 实际合法）
+        self._media_player.setAudioOutput(None)
         self._audio_output.deleteLater()
         self._media_player.deleteLater()
 
@@ -262,8 +262,8 @@ class NoteLyricDisplay(QWidget):
             # 播放时间（左下角）：唯一每帧变化的计时器元素，由播放器叠加
             if self._core.show_play_time:
                 painter.setPen(QColor(self._core.small_font_color_hex))
-                painter.setFont(self._core.timer_font)
-                fm_timer = self._core._fm_timer
+                painter.setFont(self._core.small_font)
+                fm_timer = self._core._fm_small
                 margin_x = max(12, int(self.width() * 0.01))
                 margin_y = max(12, int(self.height() * 0.018))
                 painter.drawText(
@@ -474,7 +474,7 @@ class NoteLyricDisplay(QWidget):
 def display(ustx_info: dict) -> NoteLyricDisplay:
     """启动播放器窗口，返回窗口引用（调用方需保持引用防止 GC）。
 
-    窗口标志必须在 show 之前统一设置，避免全屏与置顶标志冲突导致边角漏出。
+    窗口标志必须在 show 之前统一设置，避免 show 后再改标志导致边角漏出。
     """
     logger.info("创建播放器窗口...")
     window = NoteLyricDisplay(ustx_info)

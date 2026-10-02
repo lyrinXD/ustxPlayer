@@ -139,7 +139,6 @@ ustxPlayer 有以下附属项目：
 - [PySide6-Fluent-Widgets](https://github.com/zhiyiYo/PyQt-Fluent-Widgets/tree/PySide6) — Fluent Design 组件库
 - [loguru](https://github.com/Delgan/loguru) — 日志库
 - [PyYAML](https://github.com/yaml/pyyaml) — USTX 工程文件解析
-- [PyAV](https://github.com/PyAV-Org/PyAV) — 视频导出时的 RGBA→YUV420P 转换 + 音频时长探测
 - [pywin32](https://github.com/mhammond/pywin32) — Windows API 绑定（无边框窗口）
 - [FFmpeg](https://ffmpeg.org/) — 视频导出编码（独立二进制，非 Python 包）
 

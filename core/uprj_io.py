@@ -8,7 +8,6 @@
 import json
 import os
 import copy
-from typing import Optional
 
 from core.log import logger
 from core.settings.style import _STYLE_COLOR_DEFAULTS
@@ -80,7 +79,8 @@ class UprjProjectIO:
     """.uprj 工程文件序列化服务（v3 自包含）。
 
     构造时注入 SettingsManager（通过其子域与会话状态读写字段）。
-    数导入顺序规避信号副作用清空结构化数据，字段默认值唯一真相源在 _get_project_defaults。
+    导入按阶段顺序进行，规避信号副作用清空结构化数据；
+    字段默认值的唯一真相源在 _get_project_defaults。
     """
 
     # 导入时需延后/特殊处理的字段名集合
@@ -313,6 +313,7 @@ class UprjProjectIO:
             "tempos": [],
             "tracks": 1,
             "tracks_info": [],
+            "empty_tracks": [],
             "wave_part_count": 0,
             "notes": [],
         }
@@ -434,7 +435,5 @@ class UprjProjectIO:
         """
         if self._m._deferred_ustx_parse is None:
             return
-        ns = self._m._deferred_ustx_parse.get("note_styles", {})
-        if isinstance(ns, dict):
-            self._m.style.note_styles = ns
+        self._m.style.note_styles = self._m._deferred_ustx_parse.get("note_styles", {})
         self._m._deferred_ustx_parse = None

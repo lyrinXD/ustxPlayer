@@ -5,7 +5,7 @@
 供播放器和主窗口使用。
 """
 
-from typing import List, Dict, Union
+from typing import Any, List, Dict
 import os
 
 import yaml
@@ -16,10 +16,11 @@ from core.log import logger
 # ===================== 主解析函数 =====================
 
 
-def get_ustx_info(ustx_path: str) -> Dict[str, Union[str, float, int, List[Dict]]]:
+def get_ustx_info(ustx_path: str) -> Dict[str, Any]:
     """解析 USTX 文件（YAML 格式），提取版本、速度、轨道数和音符列表。
 
     USTX 是 OpenUtau 使用的 YAML 格式文件，包含更丰富的信息。
+    返回 dict 为异构容器，各键类型以下方 Returns 说明为准。
 
     Args:
         ustx_path: USTX 文件路径（.ustx 或 .txt）

@@ -61,22 +61,16 @@ def validate_hex_color(hex_color: str) -> str:
 
 
 def hex_to_rgb(hex_color: str) -> Tuple[int, int, int]:
-    """#RRGGBB → (R, G, B)。"""
-    try:
-        h = hex_color.lstrip('#')
-        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-    except Exception:
-        return (255, 255, 255)
+    """#RRGGBB → (R, G, B)。入参须先经 validate_hex_color 校验。"""
+    h = hex_color.lstrip('#')
+    return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
 
 def format_play_time(seconds: float) -> str:
     """秒数 → MM:SS:CC 格式。"""
-    try:
-        ms = int((seconds - int(seconds)) * 100)
-        td = timedelta(seconds=int(seconds))
-        return f"{td.seconds // 60:02d}:{td.seconds % 60:02d}:{ms:02d}"
-    except Exception:
-        return "00:00:00"
+    ms = int((seconds - int(seconds)) * 100)
+    td = timedelta(seconds=int(seconds))
+    return f"{td.seconds // 60:02d}:{td.seconds % 60:02d}:{ms:02d}"
 
 
 def calc_total_tick(notes: List[dict]) -> int:
@@ -147,13 +141,10 @@ def detect_lrc_max_languages(path: str) -> int:
 
     供 UI 在导入歌词时给出提示，解析失败时返回 1。
     """
-    try:
-        multi_lines = parse_lrc_file(path)
-        if not multi_lines:
-            return 1
-        return max((len(langs) for _, langs in multi_lines), default=1)
-    except Exception:
+    multi_lines = parse_lrc_file(path)
+    if not multi_lines:
         return 1
+    return max((len(langs) for _, langs in multi_lines), default=1)
 
 
 class RendererCore:
@@ -161,7 +152,7 @@ class RendererCore:
 
     NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
     NOTE_LINE_WIDTH = 5  # 音高线线宽（1080p 基准，实际值经 scaled() 后存 note_line_width）
-    COPYRIGHT_TEXT = f"ustxPlayer - {APP_VERSION} © 2026 SYEternalR"
+    COPYRIGHT_TEXT = f"Presented with ustxPlayer - {APP_VERSION}"
 
     def __init__(self, ustx_info: dict, width: int = 1920, height: int = 1080):
         self.w, self.h = width, height
@@ -281,8 +272,6 @@ class RendererCore:
             self._lrc_hide.append((to_sec(ns[-1][1]) + threshold, float('inf')))
             logger.info(f"LRC 隐藏区间: {len(self._lrc_hide)} 段, threshold={threshold}s")
 
-        # ===================== 字体与尺寸 =====================
-
     def scaled(self, base: int, minimum: int = 0) -> int:
         """按 1080p 基准等比缩放：max(round(base * h / 1080), minimum)。
 
@@ -311,7 +300,6 @@ class RendererCore:
         self.small_font = QFont(iff, small_fs)
         self._bold_small_font = QFont(iff, small_fs, QFont.Weight.Bold)
         self.copyright_font = QFont(iff, copyright_fs)
-        self.timer_font = QFont(iff, small_fs)  # 播放时间与四角信息同号
         self.note_line_width = self.scaled(self.NOTE_LINE_WIDTH, 3)
 
         # 缓存 QFontMetrics，避免每帧重复创建
@@ -320,7 +308,6 @@ class RendererCore:
         self._fm_ustx_lyric = QFontMetrics(self.ustx_lyric_font)
         self._fm_small = QFontMetrics(self.small_font)
         self._fm_copyright = QFontMetrics(self.copyright_font)
-        self._fm_timer = QFontMetrics(self.timer_font)
 
     def set_resolution(self, w: int, h: int):
         """窗口/导出分辨率变化时更新尺寸和字体。"""
@@ -410,8 +397,8 @@ class RendererCore:
         """根据当前 _play_elapsed 重新匹配音符、LRC 和背景色。"""
         current_tick = self.time_axis.seconds_to_tick(self._play_elapsed)
         self._current_bpm = self.time_axis.bpm_at_tick(current_tick)
-        # 浮点误差下恰好等于 total_tick 的边界时刻钳制到 total_tick 本身，
-        # 让它落进最后一个音符区间，避免边界帧提前闪现 END。
+        # 浮点误差下略低于 total_tick 的边界值钳到 total_tick，
+        # 保证结尾边界帧确定走 END 分支（不钳制时是否显示 END 取决于舍入）。
         if self.total_tick - 1e-6 <= current_tick < self.total_tick:
             current_tick = self.total_tick
 
@@ -641,7 +628,11 @@ class RendererCore:
     # ===================== 帧跳过签名 =====================
 
     def frame_signature(self) -> tuple:
-        """当前帧的可见状态签名，用于导出帧跳过判断。"""
+        """当前帧的可见状态签名，用于导出帧跳过判断。
+
+        契约：paint() 依赖的每一个会逐帧变化的可见量都必须登记在这里，
+        否则导出会误判"画面未变"而复用旧帧，把该元素冻结在导出视频里。
+        """
         bg = self._bg_color
         return (
             self._note_idx_hint,
@@ -668,7 +659,7 @@ class RendererCore:
         无音名显示（静默/结尾/R音符）时立即使用样式1。"""
         is_silent = self._finished or self._current_note_name == ""
         si = 0
-        if not is_silent and self._note_styles and self._note_idx_hint is not None:
+        if not is_silent and self._note_styles:
             si = self._note_styles.get(self._note_idx_hint, 0)
         if si < len(self._styles):
             p = self._styles[si]
@@ -685,7 +676,7 @@ class RendererCore:
             return QColor(self._global_bg_color_hex)
         is_silent = self._finished or self._current_note_name == ""
         si = 0
-        if not is_silent and self._note_styles and self._note_idx_hint is not None:
+        if not is_silent and self._note_styles:
             si = self._note_styles.get(self._note_idx_hint, 0)
         if si < len(self._styles):
             return QColor(validate_hex_color(self._styles[si].get("bg_color", "#000000")))
@@ -718,26 +709,22 @@ class RendererCore:
 
     def get_pitch_text(self, note_num: int) -> str:
         """MIDI 号 → 音名，应用占位符规则。"""
-        try:
-            ori = self._midi_to_note(note_num)
-            pure = _NOTE_PURE_RE.fullmatch(ori)
-            sharp = _NOTE_SHARP_RE.fullmatch(ori)
+        ori = self._midi_to_note(note_num)
+        pure = _NOTE_PURE_RE.fullmatch(ori)
+        sharp = _NOTE_SHARP_RE.fullmatch(ori)
 
-            if sharp:
-                return ori
-            if pure:
-                note, num = pure.group(1), pure.group(2)
-                if self.pitch_placeholder == "无":
-                    return f"{note}{num}"
-                elif self.pitch_placeholder == "-":
-                    return f"{note}-{num}"
-                elif self.pitch_placeholder == "自定义文字":
-                    suffix = self.pitch_custom_text.strip()
-                    return f"{note}({suffix}){num}" if suffix else f"{note}{num}"
+        if sharp:
             return ori
-        except Exception:
-            logger.exception("_get_pitch_text 异常")
-            return str(note_num)
+        if pure:
+            note, num = pure.group(1), pure.group(2)
+            if self.pitch_placeholder == "无":
+                return f"{note}{num}"
+            elif self.pitch_placeholder == "-":
+                return f"{note}-{num}"
+            elif self.pitch_placeholder == "自定义文字":
+                suffix = self.pitch_custom_text.strip()
+                return f"{note}({suffix}){num}" if suffix else f"{note}{num}"
+        return ori
 
     def _midi_to_note(self, midi_num: int) -> str:
         try:

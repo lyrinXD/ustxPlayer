@@ -24,8 +24,8 @@ from ui.accent_card import AccentHeaderCardWidget, PAGE_MARGIN, PAGE_SPACING
 
 class _ParseWorker(QObject):
     """在后台线程中解析 USTX 文件，避免阻塞 UI。"""
-    finished = Signal(object)  # ustx_info dict
-    failed = Signal(str)       # 错误信息
+    finished = Signal(object, str)  # ustx_info dict, 解析时的路径
+    failed = Signal(str)            # 错误信息
 
     def __init__(self, ustx_path: str, parent=None):
         super().__init__(parent)
@@ -34,7 +34,7 @@ class _ParseWorker(QObject):
     def run(self):
         try:
             result = ur.get_ustx_info(self._path)
-            self.finished.emit(result)
+            self.finished.emit(result, self._path)
         except Exception as e:
             logger.exception("后台解析 USTX 失败")
             self.failed.emit(str(e))
@@ -331,23 +331,26 @@ class FilePage(QWidget):
         self._parse_thread = None
         self._parse_worker = None
 
-    def _on_parse_done(self, ustx_info: dict):
-        """后台解析完成回调（主线程）。"""
+    def _on_parse_done(self, ustx_info: dict, parsed_path: str):
+        """后台解析完成回调（主线程）。
+
+        缓存键用 worker 携回的解析时路径：解析期间用户改了输入框路径时，
+        若用当前 settings 路径作键会把缓存 path 与 info 错配。
+        """
         self._parsing = False
         self.match_btn.setEnabled(True)
         self.match_btn.setText("解析 USTX")
 
         notes = ustx_info.get("notes", [])
-        ustx_path = self._s.project.ustx_path.strip()
         # 缓存完整解析结果，供 _on_play 复用，避免重复解析同一文件
-        self._s.cached_ustx_info = {"path": ustx_path, "info": ustx_info}
+        self._s.cached_ustx_info = {"path": parsed_path, "info": ustx_info}
 
         if not notes:
             InfoBar.warning("提示", "文件中没有音符", orient=Qt.Orientation.Vertical, duration=2000,
                            parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
             return
 
-        self._render_report(ustx_info, os.path.basename(ustx_path))
+        self._render_report(ustx_info, os.path.basename(parsed_path))
 
         # 延迟存储音符数据，避免表格重建阻塞当前帧
         self._pending_notes = notes
@@ -398,7 +401,7 @@ class FilePage(QWidget):
             "  解析完成",
             "═══════════════════════════════════════",
         ])
-        self.result_edit.setPlainText("\n".join(line for line in info_lines if line is not None))
+        self.result_edit.setPlainText("\n".join(info_lines))
 
     def apply_embedded_ustx_data(self):
         """应用 .uprj 内嵌解析数据（拖拽/命令行加载路径，主线程调用）。

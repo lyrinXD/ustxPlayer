@@ -58,7 +58,7 @@ class ChineseTranslator(QTranslator):
         "Desktop": "桌面",
     }
 
-    def translate(self, context, sourceText, disambiguation=None, n=-1):  # noqa: D401
+    def translate(self, context, sourceText, disambiguation=None, n=-1):
         # PySide6 不同版本可能传入 bytes 或 str，统一转 str
         if isinstance(sourceText, (bytes, bytearray)):
             src = bytes(sourceText).decode("utf-8", "replace")

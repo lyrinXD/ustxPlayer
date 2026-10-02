@@ -17,10 +17,6 @@ class ThemeSettings(QObject):
     accent_color_mode_changed = Signal(str)
     custom_accent_color_changed = Signal(str)
     card_shadow_enabled_changed = Signal(bool)
-    # 以下为持久化偏好，无监听方，不设 signal
-    current_icon_changed = Signal(str)
-    last_update_check_date_changed = Signal(str)
-    auto_check_enabled_changed = Signal(bool)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -72,15 +68,15 @@ class ThemeSettings(QObject):
             self._card_shadow_enabled = v
             self.card_shadow_enabled_changed.emit(v)
 
+    # 以下为纯持久化偏好，无监听方，不设 signal
+
     @property
     def current_icon(self) -> str:
         return self._current_icon
 
     @current_icon.setter
     def current_icon(self, v: str):
-        if self._current_icon != v:
-            self._current_icon = v
-            self.current_icon_changed.emit(v)
+        self._current_icon = v
 
     @property
     def last_update_check_date(self) -> str:
@@ -88,9 +84,7 @@ class ThemeSettings(QObject):
 
     @last_update_check_date.setter
     def last_update_check_date(self, v: str):
-        if self._last_update_check_date != v:
-            self._last_update_check_date = v
-            self.last_update_check_date_changed.emit(v)
+        self._last_update_check_date = v
 
     @property
     def auto_check_enabled(self) -> bool:
@@ -98,9 +92,7 @@ class ThemeSettings(QObject):
 
     @auto_check_enabled.setter
     def auto_check_enabled(self, v: bool):
-        if self._auto_check_enabled != v:
-            self._auto_check_enabled = v
-            self.auto_check_enabled_changed.emit(v)
+        self._auto_check_enabled = v
 
     # ===================== Settings.json 分组读写 =====================
 

@@ -51,8 +51,7 @@ class TimeAxis:
         for pos, end, sec0, tps in self._segments:
             if end is None or tick < end:
                 return sec0 + (tick - pos) / tps
-        last = self._segments[-1]
-        return last[2] + (tick - last[0]) / last[3]
+        return 0.0  # 不可达：_build 保证末段 end=None
 
     def seconds_to_tick(self, seconds) -> float:
         if seconds <= 0:
@@ -63,8 +62,7 @@ class TimeAxis:
             seg_sec = (end - pos) / tps
             if seconds < sec0 + seg_sec:
                 return pos + (seconds - sec0) * tps
-        last = self._segments[-1]
-        return last[0] + (seconds - last[2]) * last[3]
+        return 0.0  # 不可达：_build 保证末段 end=None
 
     def bpm_at_tick(self, tick) -> float:
         """返回 tick 处生效的 BPM（变速段内取当前段，tick=0 取首段）。"""
@@ -73,5 +71,4 @@ class TimeAxis:
         for pos, end, _sec0, tps in self._segments:
             if end is None or tick < end:
                 return tps / 8.0  # tps = bpm * 480 / 60 = bpm * 8
-        last = self._segments[-1]
-        return last[3] / 8.0
+        return 0.0  # 不可达：_build 保证末段 end=None
