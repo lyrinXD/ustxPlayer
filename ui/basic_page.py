@@ -178,11 +178,11 @@ class BasicPage(QWidget):
             # 配置已加载到内存，仅文件路径无效：同步 UI 供用户重新选择文件
             self._s.last_open_dir = os.path.dirname(file_path)
             self._s.write_settings()
-            InfoBar.error("ERcode007", f"工程已加载，但以下文件路径无效：\n{e}",
+            InfoBar.error("文件路径无效", f"工程已加载，{e}",
                           orient=Qt.Orientation.Vertical, duration=5000, parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
         except Exception as e:
             logger.exception("加载文件失败")
-            InfoBar.error("ERcode007", f"加载文件失败：{e}", orient=Qt.Orientation.Vertical, duration=3000,
+            InfoBar.error("加载文件失败", f"{e}", orient=Qt.Orientation.Vertical, duration=3000,
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
         finally:
             # 无论成功还是文件缺失，均需同步 UI（配置已重置+加载）
@@ -204,7 +204,7 @@ class BasicPage(QWidget):
                             parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
         except Exception as e:
             logger.exception("导出失败")
-            InfoBar.error("ERcode005", f"导出失败：{e}", orient=Qt.Orientation.Vertical, duration=3000,
+            InfoBar.error("导出失败", f"{e}", orient=Qt.Orientation.Vertical, duration=3000,
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
 
     def _on_play(self):

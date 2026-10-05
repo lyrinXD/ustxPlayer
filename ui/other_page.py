@@ -432,7 +432,7 @@ class OtherPage(QWidget):
         try:
             webbrowser.open_new_tab(url)
         except Exception as e:
-            InfoBar.error("ERcode003", f"打开网页失败：{e}", orient=Qt.Orientation.Vertical, duration=3000,
+            InfoBar.error("打开网页失败", f"{e}", orient=Qt.Orientation.Vertical, duration=3000,
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
 
     # ===================== 检查更新 =====================

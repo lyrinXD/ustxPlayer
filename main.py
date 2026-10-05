@@ -299,7 +299,7 @@ class MainWindow(FluentWindow):
         except Exception as e:
             logger.exception("播放准备失败")
             InfoBar.error(
-                "ERcode008", f"播放准备失败：{e}",
+                "播放准备失败", f"{e}",
                 orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
             )
 
@@ -328,8 +328,8 @@ class MainWindow(FluentWindow):
                     self._settings.cached_ustx_info = {"path": ustx_path, "info": core_ustx_info}
             else:
                 logger.warning(f"无可用数据: ustx_path={ustx_path!r}")
-                InfoBar.error(
-                    "ERcode001", "请先选择 USTX 文件或加载工程文件！",
+                InfoBar.warning(
+                    "未选择文件", "请先选择 USTX 文件或加载工程文件！",
                     orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
                 )
                 return None
@@ -344,7 +344,7 @@ class MainWindow(FluentWindow):
         except Exception as e:
             logger.exception("播放准备失败")
             InfoBar.error(
-                "ERcode008", f"播放准备失败：{e}",
+                "播放准备失败", f"{e}",
                 orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
             )
             return None
@@ -374,7 +374,7 @@ class MainWindow(FluentWindow):
         except Exception as e:
             logger.exception("视频导出页面打开失败")
             InfoBar.error(
-                "ERcode204", f"导出页面打开失败：{e}",
+                "导出页面打开失败", f"{e}",
                 orient=Qt.Orientation.Vertical, duration=3000, parent=self, position=InfoBarPosition.TOP_RIGHT,
             )
 
@@ -451,7 +451,7 @@ class MainWindow(FluentWindow):
 
         ext = os.path.splitext(file_path)[1].lower()
         if ext not in self._VALID_EXTENSIONS:
-            InfoBar.error("ERcode002", f"不支持的文件格式：{ext}", orient=Qt.Orientation.Vertical, duration=3000,
+            InfoBar.error("不支持的文件格式", f"无法打开 {ext} 文件", orient=Qt.Orientation.Vertical, duration=3000,
                           parent=self, position=InfoBarPosition.TOP_RIGHT)
             return
         self._handle_dropped_file(file_path)
@@ -510,7 +510,7 @@ class MainWindow(FluentWindow):
         """Toast 动画结束后执行：写配置 → 同步页面 → 启动后台解析。"""
         # 工程名为空时自动使用 ustx 文件名（不含扩展名），在同步页面之前填充
         if self._settings.maybe_fill_project_name_from_ustx():
-            InfoBar.success("提示", f"工程名为空，已自动填充为：{self._settings.project.project_name}",
+            InfoBar.success("成功", f"工程名为空，已自动填充为：{self._settings.project.project_name}",
                             orient=Qt.Orientation.Vertical, duration=2000, parent=self, position=InfoBarPosition.TOP_RIGHT)
         self._settings.write_settings()
         self.file_page.sync_all_from_settings()
@@ -534,10 +534,10 @@ class MainWindow(FluentWindow):
             self._settings.write_settings()
             self._sync_all_pages()
             self.file_page.apply_embedded_ustx_data()
-            InfoBar.error("ERcode006", f"工程已加载，但以下文件路径无效：\n{e}",
+            InfoBar.error("文件路径无效", f"工程已加载，{e}",
                           orient=Qt.Orientation.Vertical, duration=5000, parent=self, position=InfoBarPosition.TOP_RIGHT)
         except Exception as e:
-            InfoBar.error("ERcode006", f"加载工程文件失败：{e}", orient=Qt.Orientation.Vertical, duration=3000,
+            InfoBar.error("加载工程文件失败", f"{e}", orient=Qt.Orientation.Vertical, duration=3000,
                           parent=self, position=InfoBarPosition.TOP_RIGHT)
 
     # ===================== 导航切换时同步页面 =====================

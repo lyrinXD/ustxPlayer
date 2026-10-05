@@ -294,7 +294,7 @@ class FilePage(QWidget):
             return
         # 工程名为空时自动使用 ustx 文件名（不含扩展名）
         if self._s.maybe_fill_project_name_from_ustx():
-            InfoBar.success("提示", f"工程名为空，已自动填充为：{self._s.project.project_name}",
+            InfoBar.success("成功", f"工程名为空，已自动填充为：{self._s.project.project_name}",
                             orient=Qt.Orientation.Vertical, duration=2000, parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
         ustx_path = self._s.project.ustx_path.strip()
 
@@ -323,7 +323,7 @@ class FilePage(QWidget):
             self._parsing = False
             self.match_btn.setEnabled(True)
             self.match_btn.setText("解析 USTX")
-            InfoBar.error("ERcode004", "解析未启动，请重试", orient=Qt.Orientation.Vertical, duration=2000,
+            InfoBar.error("解析未启动", "请重试", orient=Qt.Orientation.Vertical, duration=2000,
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
 
     def _on_parse_thread_finished(self):
@@ -441,7 +441,7 @@ class FilePage(QWidget):
         self._parsing = False
         self.match_btn.setEnabled(True)
         self.match_btn.setText("解析 USTX")
-        InfoBar.error("ERcode004", f"USTX 解析失败: {err_msg}", orient=Qt.Orientation.Vertical, duration=3000,
+        InfoBar.error("USTX 解析失败", f"{err_msg}", orient=Qt.Orientation.Vertical, duration=3000,
                      parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
 
     def cleanup_parse_thread(self):

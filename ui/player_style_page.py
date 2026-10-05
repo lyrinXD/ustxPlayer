@@ -428,7 +428,7 @@ class PlayerStylePage(QWidget):
         """
         family = self._apply_custom_font(file_path)
         if family is None:
-            InfoBar.error("错误", "无法加载字体文件", orient=Qt.Orientation.Vertical, duration=2000,
+            InfoBar.error("字体加载失败", "无法加载字体文件", orient=Qt.Orientation.Vertical, duration=2000,
                           parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
             return
         combo.setCurrentText(family)
@@ -505,7 +505,7 @@ class PlayerStylePage(QWidget):
         if idx < 3:
             InfoBar.warning(
                 "提示", "默认样式不可删除（样式1-3）",
-                orient=Qt.Orientation.Vertical, duration=2000, parent=self.window(),
+                orient=Qt.Orientation.Vertical, duration=2000, parent=self.window(), position=InfoBarPosition.TOP_RIGHT,
             )
             return
         success = self._s.style.remove_style(idx)

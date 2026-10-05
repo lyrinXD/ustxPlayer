@@ -692,7 +692,7 @@ class ExportPage(QWidget):
             return
         if self._custom_resolution() is None:
             InfoBar.error(
-                "ERcode207", self._custom_resolution_error(),
+                "自定义分辨率无效", self._custom_resolution_error(),
                 orient=Qt.Orientation.Vertical, duration=4000,
                 parent=self.window(), position=InfoBarPosition.TOP_RIGHT,
             )
@@ -750,7 +750,7 @@ class ExportPage(QWidget):
     @staticmethod
     def _custom_resolution_error() -> str:
         return (
-            f"自定义分辨率无效：宽高需为 {_CUSTOM_MIN_DIM}–{_CUSTOM_MAX_DIM} 的偶数整数，"
+            f"宽高需为 {_CUSTOM_MIN_DIM}–{_CUSTOM_MAX_DIM} 的偶数整数，"
             "且长宽比需在 1:2 到 5:2 之间"
         )
 
@@ -840,8 +840,8 @@ class ExportPage(QWidget):
     def _start_export(self):
         out_path = self.edit_path.text().strip()
         if not out_path:
-            InfoBar.error(
-                "ERcode202", "请先选择输出路径", orient=Qt.Orientation.Vertical,
+            InfoBar.warning(
+                "未选择输出路径", "请先选择输出路径", orient=Qt.Orientation.Vertical,
                 duration=3000, parent=self.window(), position=InfoBarPosition.TOP_RIGHT,
             )
             return
@@ -854,7 +854,7 @@ class ExportPage(QWidget):
         if resolution is None:
             self._reset_custom_resolution()
             InfoBar.error(
-                "ERcode207", self._custom_resolution_error(),
+                "自定义分辨率无效", self._custom_resolution_error(),
                 orient=Qt.Orientation.Vertical, duration=4000,
                 parent=self.window(), position=InfoBarPosition.TOP_RIGHT,
             )
@@ -971,7 +971,7 @@ class ExportPage(QWidget):
         else:
             self.lbl_progress.setText("导出失败")
             InfoBar.error(
-                "ERcode203", message, orient=Qt.Orientation.Vertical,
+                "导出失败", message, orient=Qt.Orientation.Vertical,
                 duration=5000, parent=self.window(), position=InfoBarPosition.TOP_RIGHT,
             )
 
