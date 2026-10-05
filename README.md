@@ -4,7 +4,7 @@
 
 # ustxPlayer
 
-`v1.1.0` · 基于 [ustPlayer](https://github.com/SYEternalR/ustPlayer) 二次开发的 USTX 工程可视化工具。
+`v1.2.0` · 基于 [ustPlayer](https://github.com/SYEternalR/ustPlayer) 二次开发的 USTX 工程可视化工具。
 
 ![GitHub Release](https://img.shields.io/github/v/release/lyrinXD/ustxPlayer?style=for-the-badge)
 ![GitHub All Releases](https://img.shields.io/github/downloads/lyrinXD/ustxPlayer/total?style=for-the-badge)

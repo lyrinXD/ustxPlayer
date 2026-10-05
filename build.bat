@@ -190,6 +190,12 @@ echo  Output: dist\ustxPlayer.dist\
 echo  Binary: dist\ustxPlayer.dist\ustxPlayer.exe
 echo.
 
+REM Bundle documentation (README + changelog) into the output directory
+copy /y "README.md" "dist\ustxPlayer.dist\README.md" >nul
+copy /y "UPDATELOG.md" "dist\ustxPlayer.dist\UPDATELOG.md" >nul
+echo  Documentation bundled (README.md, UPDATELOG.md)
+echo.
+
 REM Bundle ffmpeg for video export (optional but recommended)
 if exist "tools\ffmpeg\ffmpeg.exe" (
     copy /y "tools\ffmpeg\ffmpeg.exe" "dist\ustxPlayer.dist\ffmpeg.exe" >nul

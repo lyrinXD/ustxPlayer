@@ -3,6 +3,89 @@
 > [!TIP]
 > 本文档部分使用 AI 编写
 
+## v1.2.0 — 稳定与性能优化版
+
+本次更新以稳定性与性能优化为主：新增 C 语言转换核心，统一全软件提示信息的表述，并清理了若干失效代码，修复了几处缺陷。
+
+---
+
+### ⚡ C 语言核心（新增 `native/`）
+
+- **`native/` 为项目的 C 核心目录**：集中存放项目用 C 编写的底层模块，便于与 Python 主逻辑分离、单独编译与复用。目前包含像素转换模块 `ustx_yuv.c`（编译为 `ustx_yuv.dll`，由 Python 经 ctypes 调用）及其编译脚本 `build.bat`。
+- **以 C 替换 PyAV 完成像素转换**：视频导出中的 RGBA→YUV420P 转换原由 PyAV 完成，现改由上述 C 模块实现。移除 PyAV 依赖后，分发体积减少约 66 MB；1080P30 与 4K60 导出耗时均稳定缩短约 5 秒。
+
+---
+
+### 💬 提示信息统一
+
+- **标题改为场景式**：顶部提示不再使用“错误”等笼统标题，改为对应的场景化标题（如“字体加载失败”）。
+- **类型与风格统一**：“未选择 X”一类提示统一为警告而非报错；提示位置参数补全，成功提示时长统一。
+
+---
+
+### 🐛 修复
+
+- **导出失败提示**：导出出错时不再因空管道对象抛无关异常，真实失败原因得以正常上报。
+- **解析缓存错配**：解析期间切换文件，缓存不再与错误的文件路径对应。
+- **边界帧处理注释**：渲染结尾的边界注释与代码不符，现更正为如实描述（行为不变）。
+
+---
+
+### 🧹 代码清理
+
+- 清理一批死代码：不可达兜底、恒真检查、无人监听的死信号、失效的注释与 `try/except`、未使用的导入等。
+- 合并重复成员，去掉重复的初始化与重复日志，个别函数更名以消除歧义。
+- 保留原有的几处无 UI 入口设置与外部工具说明，未作改动。
+
+---
+
+### 🏗️ 项目结构
+
+```
+ustxPlayer/
+├── main.py                         # 程序入口
+├── requirements.txt                # 依赖声明
+├── pyrightconfig.json              # Pyright 类型检查配置（pythonVersion / extraPaths / typeCheckingMode）
+├── VERSION                         # 版本号唯一来源
+├── build.bat                       # Nuitka 打包脚本
+├── native/                         # C 核心（底层模块）
+│   ├── ustx_yuv.c                  # RGBA→YUV420P 转换核心
+│   ├── build.bat                   # C 核心编译脚本
+│   └── ustx_yuv.dll                # 编译产物
+├── core/
+│   ├── settings_manager.py         # 配置门面（装配子域 + Settings.json 顶层读写）
+│   ├── settings_store.py           # Settings.json 原子持久化
+│   ├── settings/                   # 配置子域
+│   │   ├── project.py              # 工程（工程名/曲名/音频/选轨）
+│   │   ├── display.py              # 显示
+│   │   ├── style.py                # 样式系统
+│   │   ├── color.py                # 信息色/全局背景
+│   │   ├── player.py               # 播放
+│   │   └── theme.py                # 主题/强调色/图标
+│   ├── uprj_io.py                  # .uprj 工程序列化（v3 自包含）
+│   ├── ustxreader.py               # USTX 工程解析器
+│   ├── ustxplayer.py               # 全屏播放器
+│   ├── renderer_core.py            # 渲染核心（实时播放与视频导出共用）
+│   ├── time_axis.py                # 变速时间轴换算
+│   ├── video_exporter.py           # 视频导出引擎
+│   ├── taskbar_progress.py         # 任务栏进度（ITaskbarList3）
+│   ├── app_icons.py                # 应用图标循环
+│   ├── i18n.py                     # 界面汉化翻译器
+│   └── log.py                      # 日志系统（loguru）
+└── ui/
+    ├── accent_card.py              # 卡片组件（AccentHeaderCardWidget）
+    ├── basic_page.py               # 基础 — 项目信息、显示选项、播放
+    ├── file_page.py                # 文件 — USTX/工程选择、解析
+    ├── player_style_page.py        # 播放器 — 颜色、字体、显示设置
+    ├── lyric_edit_page.py          # 歌词 — 逐字样式编辑、批量编辑
+    ├── export_window.py            # 视频导出页
+    └── other_page.py               # 其他 — 主题、快捷键、更新、关于
+```
+
+> 相比 v1.1.0：新增 `native/` 目录承载 C 核心（`ustx_yuv.c`）；其余模块结构不变。
+
+---
+
 ## v1.1.0 — ustxPlayer 重大升级版
 
 > 📺 **视频**：[v1.1.0 介绍视频](https://www.bilibili.com/video/BV1Euh56HE2S/)
