@@ -473,7 +473,7 @@ class RendererCore:
             logger.exception("_update_lrc 异常")
 
     def _pitch_polyline_points(self, note, note_length, start_x, curve_width, cy, wh):
-        """构建当前音符的音高线折线（借鉴 OpenUTAU ExpressionCanvas）：
+        """构建当前音符的音高线折线（借鉴 OpenUtau ExpressionCanvas）：
         pitd 相邻点直接线性连接；无数据 = 默认值 0 = 整条水平线；
         首尾数据不足处延伸到默认值 0，不在缺口补零（避免竖线毛刺）。"""
         pb_ticks = note.get("pitch_ticks", [])

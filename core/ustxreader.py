@@ -50,7 +50,7 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Any]:
         data = {}
 
     ustx_version = data.get('ustx_version', 'unknown')
-    # BPM：OpenUTAU v0.9+ 把 tempo 存在根级 tempos 列表（UTempo{position,bpm}），
+    # BPM：OpenUtau v0.9+ 把 tempo 存在根级 tempos 列表（UTempo{position,bpm}），
     # 根级 bpm 是 v0.6 前的遗留字段，改 BPM 后不再同步（恒为旧值），必须优先读 tempos。
     tempos = data.get('tempos') or []
     if tempos and isinstance(tempos[0], dict):
@@ -107,7 +107,7 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Any]:
         for note in notes:
             note_num = note.get('tone', 0)
             lyric = note.get('lyric', '')
-            # OpenUTAU 歌词可带语言前缀（en/、ja/ 等，语言码无法穷举，前缀后必有 /），
+            # OpenUtau 歌词可带语言前缀（en/、ja/ 等，语言码无法穷举，前缀后必有 /），
             # 前缀只用于选择音源/词典，不应显示；统一按第一个 "/" 截断。
             if '/' in lyric:
                 lyric = lyric.split('/', 1)[1]

@@ -1,10 +1,10 @@
-"""OpenUTAU tempos 分段的 tick↔秒换算。"""
+"""OpenUtau tempos 分段的 tick↔秒换算。"""
 
 from typing import List, Tuple
 
 
 class TimeAxis:
-    """按 OpenUTAU 根级 `tempos`（[{position, bpm}]）分段换算 tick 与秒。
+    """按 OpenUtau 根级 `tempos`（[{position, bpm}]）分段换算 tick 与秒。
 
     单一 tempo 时与旧公式 `tick_per_second = bpm * 480 / 60` 完全一致；
     多段 tempo 时每段独立速率：tick→秒按段累加，秒→tick 按段逆查。
