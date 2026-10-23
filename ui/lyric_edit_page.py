@@ -526,7 +526,10 @@ class LyricEditPage(QWidget):
         self._note_styles = {}  # 新音符数据 → 清空所有逐字样式
         self._global_rows = []
         self._table_built_for = None
-        self._build_table()
+        # 本页不在前台时不建表：拖拽导入时建表会在 UI 线程阻塞数百毫秒，
+        # 打断 InfoBar 动画；切到本页时 sync_all_from_settings 会补建。
+        if self.isVisible():
+            self._build_table()
         self._refresh_track_combo()
 
     def _on_track_changed(self, track_no: int):

@@ -490,7 +490,13 @@ class MainWindow(FluentWindow):
             self._settings.last_open_dir = os.path.dirname(file_path)
             InfoBar.success("成功", f"已选择 USTX 文件：{file_path}", orient=Qt.Orientation.Vertical, duration=2000,
                             parent=self, position=InfoBarPosition.TOP_RIGHT)
-            QTimer.singleShot(600, self._do_ustx_post_drop)
+            # 自动填名提示必须和上面这条同时在拖入瞬间弹出：解析期间（GIL 争用）
+            # 任何 InfoBar 动画都会掉帧，因此它的动画必须在解析启动前结束
+            if self._settings.maybe_fill_project_name_from_ustx():
+                InfoBar.success("成功", f"工程名为空，已自动填充为：{self._settings.project.project_name}",
+                                orient=Qt.Orientation.Vertical, duration=2000, parent=self,
+                                position=InfoBarPosition.TOP_RIGHT)
+            QTimer.singleShot(300, self._do_ustx_post_drop)
 
     def _load_startup_file(self):
         """处理命令行传入的文件（拖到 exe 图标上启动时进入 sys.argv）。"""
@@ -508,10 +514,6 @@ class MainWindow(FluentWindow):
 
     def _do_ustx_post_drop(self):
         """Toast 动画结束后执行：写配置 → 同步页面 → 启动后台解析。"""
-        # 工程名为空时自动使用 ustx 文件名（不含扩展名），在同步页面之前填充
-        if self._settings.maybe_fill_project_name_from_ustx():
-            InfoBar.success("成功", f"工程名为空，已自动填充为：{self._settings.project.project_name}",
-                            orient=Qt.Orientation.Vertical, duration=2000, parent=self, position=InfoBarPosition.TOP_RIGHT)
         self._settings.write_settings()
         self.file_page.sync_all_from_settings()
         self.basic_page.sync_all_from_settings()

@@ -6,6 +6,7 @@
 """
 
 from typing import Any, List, Dict
+from bisect import bisect_left, bisect_right
 import os
 
 import yaml
@@ -44,7 +45,7 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Any]:
         raise FileNotFoundError(f"USTX 文件不存在: {ustx_path}")
 
     with open(ustx_path, 'r', encoding='utf-8') as f:
-        data = yaml.safe_load(f)
+        data = yaml.load(f, Loader=yaml.CSafeLoader)
     if not isinstance(data, dict):
         # 空文件或非映射（如纯列表/标量）→ 视为无内容，避免 AttributeError
         data = {}
@@ -120,10 +121,13 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Any]:
             pitch_bend: List[int] = []
             pitch_ticks: List[int] = []
             if sorted_ticks:
-                for t in sorted_ticks:
-                    if note_pos <= t <= note_end:
-                        pitch_bend.append(tick_pitch[t])
-                        pitch_ticks.append(t - note_pos)
+                # 曲线点已按全局 tick 排序，二分取 [note_pos, note_end] 闭区间内的点，
+                # 避免每个音符都整条曲线线性扫描（原实现是 O(音符数 × 曲线点数)）
+                lo = bisect_left(sorted_ticks, note_pos)
+                hi = bisect_right(sorted_ticks, note_end)
+                for t in sorted_ticks[lo:hi]:
+                    pitch_bend.append(tick_pitch[t])
+                    pitch_ticks.append(t - note_pos)
 
             note_list.append({
                 "index": f"{note_global_idx:04d}",
