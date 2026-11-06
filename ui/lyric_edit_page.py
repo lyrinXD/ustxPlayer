@@ -8,43 +8,65 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTableWidgetItem,
     QHeaderView, QAbstractItemView,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QKeyEvent, QFocusEvent, QMouseEvent, QPainter
+from PySide6.QtCore import Qt, QEvent, QRectF
+from PySide6.QtGui import (
+    QColor, QKeyEvent, QFocusEvent, QMouseEvent, QPainter,
+    QPainterPath, QRegion,
+)
 
 from qfluentwidgets import (
     LineEdit, ComboBox,
     BodyLabel,
     InfoBar, InfoBarPosition, PrimaryPushButton, TableWidget,
+    isDarkTheme, qconfig,
 )
 from qfluentwidgets.common.color import autoFallbackThemeColor
+from qfluentwidgets.common.style_sheet import setCustomStyleSheet, themeColor
 from qfluentwidgets.components.widgets.table_view import TableItemDelegate
 
 from core.settings_manager import SettingsManager
 from ui.accent_card import AccentHeaderCardWidget, PAGE_MARGIN, PAGE_SPACING
 
+# 表格单元格统一的对齐与选中标志
+_ITEM_FLAGS = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable
+_ALIGN_CENTER = Qt.AlignmentFlag.AlignCenter
 
-# ===================== 自定义表格（拦截左右键） =====================
+
+# ===================== 表格 =====================
+
+class _TableBorder(QWidget):
+    """表格顶层圆角边框；覆盖 viewport 与滚动条槽，透明且鼠标穿透。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("lyricTableBorder")
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
 
 class _StyleTableWidget(TableWidget):
-    """歌词编辑表格：qfluentwidgets 原生 TableWidget + 样式列指示条。
+    """歌词表格：原生 TableWidget + 样式列选中指示条。
 
-    选中行在样式列（第 4 列）左侧显示原生强调色指示条（_StyleTableItemDelegate），
-    保留 TableWidget 原生 hover/按下/选中动画与 BackgroundRole 颜色；左右方向键
-    转发给外部回调切换样式，失焦清选中。
+    左右方向键交给外部切换样式，失焦清选中；主题和边框由库及 _TableBorder 管理。
     """
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setItemDelegate(_StyleTableItemDelegate(self))
-        self.delegate.margin = 0  # 去掉每行上下 2px 透明间隙
-        # 原生 delegate 自带的悬停 tooltip 在窗口关闭时会留下悬空 C++ 指针
-        # （Internal C++ object already deleted），这里禁用。
-        tip = self.delegate.tooltipDelegate
+        self._delegate = _StyleTableItemDelegate(self)
+        self.setItemDelegate(self._delegate)
+        self._delegate.margin = 0  # 去掉每行上下 2px 透明间隙
+        # 禁用原生 tooltip：窗口关闭时可能留下悬空 C++ 指针
+        tip = self._delegate.tooltipDelegate
         self.removeEventFilter(tip)
         self.viewport().removeEventFilter(tip)
         tip.deleteLater()
-        self.setBorderVisible(True)
-        self.setBorderRadius(8)
+        self.setBorderVisible(False)
+        self._border = _TableBorder(self)
+        self._border.raise_()
+        self.viewport().installEventFilter(self)
+        self._update_table_style()
+        qconfig.themeColorChanged.connect(self._update_table_style)
+        qconfig.themeChanged.connect(self._update_table_style)
         self.setAlternatingRowColors(False)
         self.verticalHeader().setDefaultSectionSize(30)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
@@ -55,6 +77,63 @@ class _StyleTableWidget(TableWidget):
 
     def set_style_key_callback(self, cb):
         self._style_key_callback = cb
+
+    def _update_table_style(self, _color=None):
+        """合并表头与圆角样式；强调色变化时重建，明暗主题由库自动切换。"""
+        accent = themeColor()
+        tint = f"rgba({accent.red()}, {accent.green()}, {accent.blue()}, 0.08)"
+
+        def qss(line: str) -> str:
+            return (
+                "QHeaderView { background: transparent; border: none; }"
+                "QHeaderView::section {"
+                f"  background: {tint};"
+                "  color: --ThemeColorPrimary;"
+                "  padding: 0 4px;"
+                "  border: none;"
+                f"  border-bottom: 1px solid {line};"
+                "  font-size: 14px;"
+                "  font-weight: normal;"
+                "}"
+                "QHeaderView::section:first { border-top-left-radius: 8px; }"
+                "QHeaderView::section:last { border-top-right-radius: 8px; }"
+            )
+
+        def border_qss(line: str) -> str:
+            return (
+                "QWidget#lyricTableBorder {"
+                "  background: transparent;"
+                f"  border: 1px solid {line};"
+                "  border-radius: 8px;"
+                "}"
+            )
+
+        setCustomStyleSheet(self, qss("#e6e6e6"), qss("#3a3a3a"))
+        self._border.setStyleSheet(
+            border_qss("#3a3a3a" if isDarkTheme() else "#e6e6e6"))
+
+    def _update_mask(self):
+        """裁掉 viewport 两个下角；上角紧接表头，保持直角。"""
+        viewport = self.viewport()
+        if viewport.width() <= 0 or viewport.height() <= 0:
+            return
+        # 内收 1px，与边框内沿贴合
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(viewport.rect()).adjusted(0, 0, -1, -1), 7, 7)
+        region = QRegion(path.toFillPolygon().toPolygon())
+        region = region.united(QRegion(0, 0, viewport.width(), 8))
+        viewport.setMask(region)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._border.setGeometry(self.rect())
+        self._border.raise_()
+        self._update_mask()
+
+    def eventFilter(self, obj, event):
+        if obj is self.viewport() and event.type() == QEvent.Type.Resize:
+            self._update_mask()
+        return super().eventFilter(obj, event)
 
     def keyPressEvent(self, event: QKeyEvent):
         if event.key() in (Qt.Key.Key_Left, Qt.Key.Key_Right):
@@ -79,18 +158,15 @@ class _StyleTableWidget(TableWidget):
 class _StyleTableItemDelegate(TableItemDelegate):
     """把原生指示条从第 0 列移到第 4 列（样式格），x 用 option.rect.x()+4 对齐。
 
-    通过包装库的 paint：库在 col0 画指示条前先被抑制，结束后再在样式列
-    补画一次；其余 hover/按下/选中背景与文字绘制全部走库原生逻辑。
+    库的 paint 只在第 0 列调用 _drawIndicator，因此这里让它在首列调用时直接
+    返回（抑制），再由 paint 在样式列补画一次；其余 hover/按下/选中背景与
+    文字绘制全部走库原生逻辑。
     """
 
     INDICATOR_COLUMN = 3
 
     def paint(self, painter: QPainter, option, index):
-        self._suppress_indicator = True
-        try:
-            super().paint(painter, option, index)
-        finally:
-            self._suppress_indicator = False
+        super().paint(painter, option, index)
         if (index.row() in self.selectedRows
                 and index.column() == self.INDICATOR_COLUMN
                 and self.parent().horizontalScrollBar().value() == 0):
@@ -101,18 +177,14 @@ class _StyleTableItemDelegate(TableItemDelegate):
                 painter.restore()
 
     def setSelectedRows(self, indexes):
-        """同步选中行，但不清 pressedRow。
-
-        库原版会在选中同步时顺手清掉 pressedRow，导致两条点击路径的
-        按下收缩时机不一致；这里保留 pressedRow，统一由松开时清除。
-        """
+        """同步选中行；保留 pressedRow，按下动画统一由松开时清除。"""
         self.selectedRows.clear()
         for index in indexes:
             self.selectedRows.add(index.row())
 
     def _drawIndicator(self, painter: QPainter, option, index):
-        if getattr(self, "_suppress_indicator", False):
-            return
+        if index.column() != self.INDICATOR_COLUMN:
+            return  # 库在首列调用，本表格改由 paint 在样式列绘制
         y, h = option.rect.y(), option.rect.height()
         # 按下时收缩（0.35h），松开恢复（0.257h）：两条点击路径一致
         ph = round(0.35 * h if self.pressedRow == index.row() else 0.257 * h)
@@ -167,8 +239,10 @@ class LyricEditPage(QWidget):
         self._global_rows: list[int] = []
         self._building_table = False  # 防止重复建表
         self._handling_selection = False  # 防止选中回调递归
-        self._table_built_for: Optional[tuple] = None  # (音符引用, 轨道号)，避免重复重建
+        self._table_built_for: Optional[tuple] = None  # (音符列表引用, 轨道号)，避免重复重建
         self._syncing_styles = False  # 防止同步样式时信号循环
+        self._style_colors: list[tuple[QColor, QColor]] = []  # 逐样式缓存的 (背景色, 前景色)
+        self._style_dirty = False  # 样式变更时本页不可见，切页时补刷
         self._setup_ui()
         self._connect_signals()
 
@@ -252,26 +326,23 @@ class LyricEditPage(QWidget):
         edit_vbox = QVBoxLayout()
         edit_vbox.setSpacing(8)
 
-        # 规则说明
-        rule_row = QHBoxLayout()
-        rule_row.setSpacing(8)
-        rule_row.addWidget(BodyLabel("静默和结尾时显示始终应用样式1"))
-        rule_row.addStretch()
-        edit_vbox.addLayout(rule_row)
-
         # 操作提示
         hint_row = QHBoxLayout()
         hint_row.setSpacing(8)
         hint_row.addWidget(BodyLabel("提示: 选中单元格后，← → 切换样式，↑ ↓ 切换行"))
         hint_row.addStretch()
+        style_note = BodyLabel("静默和结尾时始终应用样式1")
+        style_note.setTextColor("#6b6b6b", "#9e9e9e")
+        hint_row.addWidget(style_note)
         edit_vbox.addLayout(hint_row)
 
-        # 表格（自定义子类拦截左右方向键）
+        # 外观交给 Fluent TableWidget；子类只扩展样式列选中与方向键行为
         self.table = _StyleTableWidget()
         self.table.setColumnCount(4)
         self.table.setHorizontalHeaderLabels(["序号", "逐字歌词", "音高", "样式"])
-        # 所有列等宽拉伸，不随窗口缩放
+        # 四列等宽拉伸
         header = self.table.horizontalHeader()
+        header.setFixedHeight(38)  # 略高于 30px 数据行
         for col in range(4):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Stretch)
         header.setStretchLastSection(False)
@@ -281,8 +352,7 @@ class LyricEditPage(QWidget):
         self.table.verticalHeader().setVisible(False)
         # 设置左右键回调
         self.table.set_style_key_callback(self._on_style_key)
-        self.table.setMinimumHeight(280)
-        self._apply_table_theme()
+        self.table.setMinimumHeight(420)
         edit_vbox.addWidget(self.table, 1)
         edit_card.viewLayout.addLayout(edit_vbox)
         layout.addWidget(edit_card, 1)
@@ -308,7 +378,7 @@ class LyricEditPage(QWidget):
         else:
             new_style = (current_style + 1) % self._s.style.style_count
         self._note_styles[global_row] = new_style
-        self._refresh_table_row(row, new_style)
+        self._set_style_cell(row, new_style)
         self.table.setCurrentCell(row, 3)
         self._sync_styles_to_settings()
 
@@ -328,7 +398,9 @@ class LyricEditPage(QWidget):
         """根据音符数据重建表格：只显示所选轨，样式键保持全局行号。"""
         notes = self._s.ustx_notes
         selected = self._s.project.selected_track_no
-        if self._table_built_for == (notes, selected):
+        if (self._table_built_for is not None
+                and self._table_built_for[0] is notes
+                and self._table_built_for[1] == selected):
             return
         if self._building_table:
             return
@@ -351,41 +423,29 @@ class LyricEditPage(QWidget):
 
             for i, global_i in enumerate(filtered):
                 note = notes[global_i]
-                # 序号（当前轨内序号；可选中以支持原生整行选择）
-                idx_item = QTableWidgetItem(str(i + 1))
-                idx_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                idx_item.setFlags(
-                    Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                self.table.setItem(i, 0, idx_item)
-
-                # 逐字歌词（可选中以支持原生整行选择）
-                lyric = note.get("lyric", "")
-                lyric_item = QTableWidgetItem(lyric)
-                lyric_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                lyric_item.setFlags(
-                    Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                self.table.setItem(i, 1, lyric_item)
-
-                # 音高（可选中以支持原生整行选择）
-                note_num = note.get("note_num", 0)
-                pitch_name = midi_to_pitch(note_num)
-                pitch_item = QTableWidgetItem(pitch_name)
-                pitch_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-                pitch_item.setFlags(
-                    Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                self.table.setItem(i, 2, pitch_item)
-
+                # 前三列都可选中，配合整行选择行为；文本居中
+                self.table.setItem(i, 0, self._make_item(str(i + 1)))
+                self.table.setItem(i, 1, self._make_item(note.get("lyric", "")))
+                self.table.setItem(
+                    i, 2, self._make_item(midi_to_pitch(note.get("note_num", 0))))
                 # 样式：保留已有样式，新音符默认样式1
-                if global_i not in self._note_styles:
-                    self._note_styles[global_i] = 0
-                self._set_style_cell(i, self._note_styles[global_i])
+                self._set_style_cell(i, self._note_styles.setdefault(global_i, 0))
 
             self._table_built_for = (notes, selected)
+            self._style_dirty = False
             self._sync_styles_to_settings()
         finally:
             self._building_table = False
             self.table.setUpdatesEnabled(True)
             self.table.currentItemChanged.connect(self._on_selection_changed)
+
+    @staticmethod
+    def _make_item(text: str) -> QTableWidgetItem:
+        """构造只读居中的单元格。"""
+        item = QTableWidgetItem(text)
+        item.setTextAlignment(_ALIGN_CENTER)
+        item.setFlags(_ITEM_FLAGS)
+        return item
 
     @staticmethod
     def _contrast_foreground(bg: QColor) -> QColor:
@@ -400,19 +460,47 @@ class LyricEditPage(QWidget):
             return QColor(p.get("lyric_color", "#ffffff"))
         return QColor("#ffffff")
 
-    def _set_style_cell(self, row: int, style_index: int):
-        """设置样式单元格的文本和颜色。"""
-        item = QTableWidgetItem(f"样式{style_index + 1}")
-        item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        bg = self._style_bg_color(style_index)
-        item.setBackground(bg)
-        item.setForeground(self._contrast_foreground(bg))
-        item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-        self.table.setItem(row, 3, item)
+    def _rebuild_style_colors(self) -> list[tuple[QColor, QColor]]:
+        """按样式索引重建 (背景色, 前景色) 列表。"""
+        colors = []
+        for i in range(self._s.style.style_count):
+            bg = self._style_bg_color(i)
+            colors.append((bg, self._contrast_foreground(bg)))
+        return colors
 
-    def _refresh_table_row(self, row: int, style_index: int):
-        """刷新单行的样式单元格（方向键切换时）。"""
-        self._set_style_cell(row, style_index)
+    def _style_paint(self, style_index: int) -> tuple[QColor, QColor]:
+        """取样式对应的 (背景色, 前景色)，按样式索引缓存，避免逐行解析颜色字符串。"""
+        if len(self._style_colors) != self._s.style.style_count:
+            self._style_colors = self._rebuild_style_colors()
+        if 0 <= style_index < len(self._style_colors):
+            return self._style_colors[style_index]
+        return self._style_colors[0]
+
+    def _set_style_cell(self, row: int, style_index: int):
+        """设置样式单元格的文本和颜色；已存在则就地更新，不重建单元格。"""
+        text = f"样式{style_index + 1}"
+        bg, fg = self._style_paint(style_index)
+        item = self.table.item(row, 3)
+        if item is None:
+            item = self._make_item(text)
+            self.table.setItem(row, 3, item)
+        else:
+            item.setText(text)
+        item.setBackground(bg)
+        item.setForeground(fg)
+
+    def _refresh_style_cells(self, styles: Optional[set[int]] = None):
+        """刷新样式列；styles 为 None 时全表刷新，否则只刷用到这些样式索引的行。"""
+        if styles is not None and not styles:
+            return
+        self.table.setUpdatesEnabled(False)
+        try:
+            for row in range(self.table.rowCount()):
+                style_index = self._style_for_row(row)
+                if styles is None or style_index in styles:
+                    self._set_style_cell(row, style_index)
+        finally:
+            self.table.setUpdatesEnabled(True)
 
     # ===================== 批量筛选 =====================
 
@@ -488,10 +576,14 @@ class LyricEditPage(QWidget):
                             parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
             return
         style_idx = self.batch_style_combo.currentIndex()
-        for row in rows:
-            global_row = self._global_of(row)
-            self._note_styles[global_row] = style_idx
-            self._set_style_cell(row, style_idx)
+        self.table.setUpdatesEnabled(False)
+        try:
+            for row in rows:
+                global_row = self._global_of(row)
+                self._note_styles[global_row] = style_idx
+                self._set_style_cell(row, style_idx)
+        finally:
+            self.table.setUpdatesEnabled(True)
         self._sync_styles_to_settings()
         # 清空输入框并重置样式到样式1
         self.filter_idx_start.clear()
@@ -513,8 +605,6 @@ class LyricEditPage(QWidget):
         self.track_combo.currentIndexChanged.connect(self._on_track_selected)
         # 选中单元格时用强调色高亮（不依赖 stylesheet）
         self.table.currentItemChanged.connect(self._on_selection_changed)
-        # 主题变更时刷新表格 QSS（网格色、表头色等）
-        self._s.theme.theme_mode_changed.connect(self._apply_table_theme)
 
     def _on_notes_changed(self, notes: list):
         """音符数据更新时重建表格。
@@ -526,10 +616,11 @@ class LyricEditPage(QWidget):
         self._note_styles = {}  # 新音符数据 → 清空所有逐字样式
         self._global_rows = []
         self._table_built_for = None
-        # 本页不在前台时不建表：拖拽导入时建表会在 UI 线程阻塞数百毫秒，
-        # 打断 InfoBar 动画；切到本页时 sync_all_from_settings 会补建。
+        # 本页不在前台时不建表：拖拽导入时建表会阻塞 UI，打断 InfoBar 动画。
         if self.isVisible():
             self._build_table()
+        else:
+            self.table.setRowCount(0)  # 防止切回本页时残留旧行
         self._refresh_track_combo()
 
     def _on_track_changed(self, track_no: int):
@@ -585,24 +676,32 @@ class LyricEditPage(QWidget):
             self._s.project.selected_track_no = target
 
     def _on_styles_changed(self):
-        """样式变更时刷新样式下拉框及表格颜色。"""
+        """样式数据变更：刷新样式下拉（仅数量变化时）与表格样式列颜色。"""
+        old = self._style_colors
+        new = self._rebuild_style_colors()
+        changed = {i for i in range(min(len(old), len(new)))
+                   if old[i][0].name() != new[i][0].name()}
+        self._style_colors = new
+        # 仅调色时不能重建下拉，否则会把用户在批量编辑里选的样式重置为样式1
         self._refresh_style_combo(self.batch_style_combo)
-        self.table.setUpdatesEnabled(False)
-        for row in range(self.table.rowCount()):
-            si = self._style_for_row(row)
-            self._set_style_cell(row, si)
-        self.table.setUpdatesEnabled(True)
+        if not self.isVisible():
+            self._style_dirty = True
+            return
+        # 样式数量变化说明索引已整体重映射，必须全表刷；否则只刷用到变色样式的行
+        if len(old) != len(new):
+            self._refresh_style_cells()
+        else:
+            self._refresh_style_cells(changed)
 
     def _on_note_styles_changed(self, styles: dict):
         """外部修改了逐音符样式（如删除样式后重映射），刷新表格。"""
         if self._syncing_styles:
             return
         self._note_styles.update(styles)
-        self.table.setUpdatesEnabled(False)
-        for row in range(self.table.rowCount()):
-            si = self._style_for_row(row)
-            self._set_style_cell(row, si)
-        self.table.setUpdatesEnabled(True)
+        if not self.isVisible():
+            self._style_dirty = True
+            return
+        self._refresh_style_cells()
 
     def _on_selection_changed(self, current, previous):
         """选中单元格变化时：非样式列自动跳转到样式列，保持选中状态一致。
@@ -622,7 +721,13 @@ class LyricEditPage(QWidget):
             self._handling_selection = False
 
     def _refresh_style_combo(self, combo: ComboBox):
-        """刷新样式下拉框（同步样式列表）。"""
+        """刷新样式下拉框（同步样式列表）。
+
+        样式数量没变时直接返回：调色、切页都会走到这里，重建会把用户
+        当前选中的样式重置为样式1。
+        """
+        if combo.count() == self._s.style.style_count:
+            return
         combo.blockSignals(True)
         combo.clear()
         for i in range(self._s.style.style_count):
@@ -642,44 +747,14 @@ class LyricEditPage(QWidget):
         finally:
             self._syncing_styles = False
 
-    def _apply_table_theme(self):
-        """根据当前主题设置表格样式，透明背景与卡片融合，item.setBackground() 直接生效。"""
-        from qfluentwidgets import qconfig, Theme
-        is_dark = qconfig.theme == Theme.DARK
-        grid = "#3d3d3d" if is_dark else "#e0e0e0"
-        text = "#e0e0e0" if is_dark else "#333333"
-        header_bg = "#353535" if is_dark else "#e8e8e8"
-        self.table.setStyleSheet(
-            f"QTableWidget {{"
-            f"  background: transparent;"
-            f"  border: none;"
-            f"  color: {text};"
-            f"  gridline-color: {grid};"
-            f"  outline: none;"
-            f"  selection-background-color: transparent;"
-            f"  selection-color: {text};"
-            f"}}"
-            f"QTableWidget::item {{ padding: 4px 8px; height: 30px; }}"
-            f"QTableWidget::item:selected {{ background: transparent; }}"
-            f"QHeaderView {{ background: transparent; }}"
-            f"QHeaderView::section {{"
-            f"  background: {header_bg};"
-            f"  color: {text};"
-            f"  padding: 6px 4px;"
-            f"  border: none;"
-            f"  border-bottom: 1px solid {grid};"
-            f"  font-weight: 600;"
-            f"}}"
-            f"QHeaderView::section:first {{ border-top-left-radius: 8px; }}"
-            f"QHeaderView::section:last {{ border-top-right-radius: 8px; }}"
-        )
-
     def sync_all_from_settings(self):
         """从 Settings 同步所有数据。"""
-        self._apply_table_theme()
         self._refresh_track_combo()
         self._refresh_style_combo(self.batch_style_combo)
         self.table.clearSelection()
         self.table.setCurrentCell(-1, -1)
         if self._s.ustx_notes:
             self._build_table()
+        if self._style_dirty:
+            self._style_dirty = False
+            self._refresh_style_cells()
