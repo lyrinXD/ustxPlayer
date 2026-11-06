@@ -14,6 +14,21 @@ import yaml
 from core.log import logger
 
 
+class UstxLoader(yaml.CSafeLoader):
+    """USTX 专用 loader：lyric 一律按原始文本读成字符串，其余字段保持默认解析。
+
+    PyYAML 按 YAML 1.1 语义把未加引号的 on/off/yes/no（及 true/false）解析成 bool，
+    英文/日文罗马音歌词（如 no）会中招，下游 `'/' in lyric` 直接 TypeError。
+    """
+
+    def construct_mapping(self, node, deep=False):
+        mapping = super().construct_mapping(node, deep=deep)
+        for key_node, value_node in node.value:
+            if key_node.value == 'lyric' and isinstance(value_node, yaml.ScalarNode):
+                mapping['lyric'] = value_node.value
+        return mapping
+
+
 # ===================== 主解析函数 =====================
 
 
@@ -45,7 +60,7 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Any]:
         raise FileNotFoundError(f"USTX 文件不存在: {ustx_path}")
 
     with open(ustx_path, 'r', encoding='utf-8') as f:
-        data = yaml.load(f, Loader=yaml.CSafeLoader)
+        data = yaml.load(f, Loader=UstxLoader)
     if not isinstance(data, dict):
         # 空文件或非映射（如纯列表/标量）→ 视为无内容，避免 AttributeError
         data = {}
