@@ -1,5 +1,5 @@
 # uprj_io.py — .uprj 工程文件导入/导出
-""".uprj（v3 自包含 JSON）序列化/反序列化、字段注册表与校验。
+""".uprj（v3.1 自包含 JSON）序列化/反序列化、字段注册表与校验。
 
 数据来源与载体是 SettingsManager 的各子域（project/display/color/player），
 本模块只负责记录、默认值、序化与导入时的字段落位，不持有任何设置业务。
@@ -7,10 +7,30 @@
 
 import json
 import os
+import re
 import copy
 
 from core.log import logger
 from core.settings.style import _STYLE_COLOR_DEFAULTS
+
+
+# 工程格式版本：主.次两段数值比较（同 USTX 的 System.Version 方案），
+# 文件里存字符串，不用浮点判断，"3.10" 也不会等于 "3.1"。
+PROJECT_VERSION = (3, 1)
+PROJECT_VERSION_STR = "3.1"
+_VERSION_RE = re.compile(r"^(\d+)(?:\.(\d+))?$")
+
+
+def _parse_project_version(raw) -> tuple[int, int] | None:
+    """把 3 / "3.0" / "3.1" 解析为 (主, 次)；无法识别返回 None。"""
+    if isinstance(raw, bool):
+        return None
+    if isinstance(raw, float):
+        raw = f"{raw:g}"
+    m = _VERSION_RE.match(str(raw).strip())
+    if not m:
+        return None
+    return int(m.group(1)), int(m.group(2) or 0)
 
 
 class ProjectFileMissingError(Exception):
@@ -36,6 +56,7 @@ _COMPACT_FIELDS = (
     ("ustx_data", "tracks_info"),
     ("settings", "styles"),
     ("settings", "note_styles"),
+    ("settings", "phoneme_map"),
 )
 
 
@@ -145,6 +166,8 @@ class UprjProjectIO:
         ("styles", "json"),
         ("active_style_index", "int"),
         ("note_styles", "json"),
+        # 自定义音素映射（来源歌词 → 目标文本）
+        ("phoneme_map", "json"),
         # 多轨工程：当前播放的人声轨（不在 tracks_info 内时回退第一条）
         ("selected_track_no", "int"),
     ]
@@ -155,7 +178,7 @@ class UprjProjectIO:
         # PROJECT_SCHEMA 字段 → 所属子域映射（.uprj 序列化定位字段用）
         self._FIELD_OWNER = {}
         for name in ("project_name", "song_name", "song_author", "ustx_author",
-                     "audio_path", "selected_track_no"):
+                     "audio_path", "selected_track_no", "phoneme_map"):
             self._FIELD_OWNER[name] = manager.project
         for name in ("bg_color", "note_color", "lyric_color", "pitch_curve_color",
                      "styles", "active_style_index", "note_styles"):
@@ -237,6 +260,7 @@ class UprjProjectIO:
             ],
             "active_style_index": 0,
             "note_styles": {},
+            "phoneme_map": {},
             "selected_track_no": 0,
         }
 
@@ -261,7 +285,7 @@ class UprjProjectIO:
     # ===================== .uprj 导出/导入 =====================
 
     def export_uprj(self, output_file: str):
-        """导出全部配置到 .uprj 工程文件（JSON 格式，v3 自包含）。
+        """导出全部配置到 .uprj 工程文件（JSON 格式，v3.1 自包含）。
 
         全量记录所有注册字段（含默认值），内嵌解析后的 ustx_data
         （get_ustx_info 输出），不再保存 USTX 原文。
@@ -279,7 +303,7 @@ class UprjProjectIO:
 
         payload = {
             "format": "ustxPlayer.uprj",
-            "version": 3,
+            "version": PROJECT_VERSION_STR,
             "ustx_data": self._get_export_ustx_data(),
             "settings": settings_data,
         }
@@ -319,7 +343,7 @@ class UprjProjectIO:
         }
 
     def import_uprj(self, input_file: str, parse_ustx: bool = True):
-        """从 .uprj 工程文件导入全部配置（JSON 格式，v3 自包含）。
+        """从 .uprj 工程文件导入全部配置（JSON 格式，v3.1 自包含，兼收 v3）。
 
         工程文件内嵌解析后的 ustx_data（get_ustx_info 输出），导入时只做
         JSON 反序列化，不解析 USTX、不写缓存。
@@ -344,7 +368,9 @@ class UprjProjectIO:
         # 校验工程文件格式，避免误导入任意 JSON 污染当前配置
         if payload.get("format") != "ustxPlayer.uprj":
             raise ValueError("不是有效的 ustxPlayer 工程文件（format 不匹配）")
-        if payload.get("version") != 3:
+        # 旧工程写整数 3，按 3.0 处理；只读 v3.x，v2 及更早交给转换工具
+        incoming = _parse_project_version(payload.get("version"))
+        if incoming is None or incoming < (3, 0) or incoming > PROJECT_VERSION:
             raise ValueError("工程格式版本不受支持，请尝试使用格式转换工具")
 
         data = payload.get("settings", {})

@@ -1,7 +1,7 @@
 # settings/project.py — 工程信息设置子域
-"""工程信息：项目名/曲名/曲师/调音师/音频路径/源文件路径/播放轨。
+"""工程信息：项目名/曲名/曲师/调音师/音频路径/源文件路径/播放轨/音素映射。
 
-前四处元信息 + audio_path + selected_track_no 参与 .uprj 序列化；
+前四处元信息 + audio_path + selected_track_no + phoneme_map 参与 .uprj 序列化；
 ustx_path 是会话级源文件路径，不进出 .uprj。
 """
 
@@ -20,6 +20,7 @@ class ProjectSettings(QObject):
     audio_path_changed = Signal(str)
     selected_track_changed = Signal(int)
     ustx_path_changed = Signal(str)
+    phoneme_map_changed = Signal(dict)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -30,6 +31,7 @@ class ProjectSettings(QObject):
         self._audio_path = ""
         self._selected_track_no = 0
         self._ustx_path = ""
+        self._phoneme_map: dict[str, str] = {}
 
     @property
     def project_name(self) -> str:
@@ -103,3 +105,16 @@ class ProjectSettings(QObject):
         if self._ustx_path != v:
             self._ustx_path = v
             self.ustx_path_changed.emit(v)
+
+    @property
+    def phoneme_map(self) -> dict[str, str]:
+        """自定义音素映射（来源歌词 → 目标文本），随 .uprj 保存。"""
+        return self._phoneme_map
+
+    @phoneme_map.setter
+    def phoneme_map(self, v: dict):
+        v = dict(v or {})
+        if self._phoneme_map != v:
+            self._phoneme_map = v
+            self.phoneme_map_changed.emit(v)
+

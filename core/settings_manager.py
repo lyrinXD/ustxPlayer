@@ -18,6 +18,7 @@ from PySide6.QtCore import QObject, Signal
 from core.log import logger
 from core.settings_store import SettingsStore
 from core.uprj_io import UprjProjectIO
+from core.ustxreader import iter_mapped_lyrics
 from core.settings import (
     ColorSettings,
     DisplaySettings,
@@ -163,6 +164,7 @@ class SettingsManager(QObject):
 
         多轨工程按 selected_track_no 过滤音符，并把逐音符样式从全局行号
         重映射到过滤后的下标；变速（根级 tempos）是工程级数据，不受选轨影响。
+        自定义音素映射在此生成副本：命中规则改写歌词，目标为非演唱符号则剔除。
         """
         ap = self.style.active_style
         all_notes = core_ustx_info.get("notes", []) or []
@@ -179,12 +181,19 @@ class SettingsManager(QObject):
                     break
             else:
                 selected = all_notes[0].get("track_no", 0) if all_notes else 0
+        phoneme_map = self.project.phoneme_map
+        selected_indices = [i for i, n in enumerate(all_notes)
+                            if n.get("track_no", 0) == selected]
         filtered_notes = []
         global_rows = []
-        for i, n in enumerate(all_notes):
-            if n.get("track_no", 0) == selected:
-                filtered_notes.append(n)
-                global_rows.append(i)
+        for i, lyric in iter_mapped_lyrics(all_notes, selected_indices, phoneme_map):
+            note = all_notes[i]
+            if note.get("lyric", "") != lyric:
+                # 复制后再改写，基准音符（ustx_notes / 解析缓存）保持原样
+                note = dict(note)
+                note["lyric"] = lyric
+            filtered_notes.append(note)
+            global_rows.append(i)
         note_styles = {
             new_i: self.style.note_styles.get(global_i, 0)
             for new_i, global_i in enumerate(global_rows)

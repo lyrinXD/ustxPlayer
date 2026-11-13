@@ -32,6 +32,21 @@ from ui.other_page import OtherPage
 from ui.export_window import ExportPage
 
 
+class _PageScrollArea(SmoothScrollArea):
+    """页面滚动区：内容高度变化后同步 Fluent 平滑滚动的内部目标缓存。"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.verticalScrollBar().rangeChanged.connect(self._schedule_cache_sync)
+
+    def _schedule_cache_sync(self, _minimum: int, _maximum: int):
+        # 范围信号发出时真实值可能尚未完成夹取，延迟到本轮事件结束再同步。
+        QTimer.singleShot(0, self._sync_cache)
+
+    def _sync_cache(self):
+        self.delegate.vScrollBar.resetValue(self.verticalScrollBar().value())
+
+
 class MainWindow(FluentWindow):
     """主窗口 — 侧边导航 + 堆叠页面。"""
 
@@ -224,7 +239,7 @@ class MainWindow(FluentWindow):
         for name in ("basic_page", "file_page", "player_style_page",
                      "lyric_edit_page", "other_page"):
             page = getattr(self, name)
-            scroll = SmoothScrollArea()
+            scroll = _PageScrollArea()
             scroll.setWidgetResizable(True)
             scroll.setWidget(page)
             scroll.setFrameShape(SmoothScrollArea.Shape.NoFrame)

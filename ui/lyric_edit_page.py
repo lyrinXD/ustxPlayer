@@ -5,19 +5,23 @@ import re
 from typing import Optional
 
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QTableWidgetItem,
+    QWidget, QApplication, QVBoxLayout, QHBoxLayout, QListWidgetItem, QTableWidgetItem,
     QHeaderView, QAbstractItemView,
 )
-from PySide6.QtCore import Qt, QEvent, QRectF
+from PySide6.QtCore import (
+    Qt, QEvent, QRect, QRectF, QTimer, QPropertyAnimation, QEasingCurve, Property,
+)
 from PySide6.QtGui import (
-    QColor, QKeyEvent, QFocusEvent, QMouseEvent, QPainter,
+    QBrush, QColor, QKeyEvent, QFocusEvent, QMouseEvent, QPainter,
     QPainterPath, QRegion,
 )
 
 from qfluentwidgets import (
     LineEdit, ComboBox,
     BodyLabel,
-    InfoBar, InfoBarPosition, PrimaryPushButton, TableWidget,
+    FluentIcon, HorizontalSeparator, IconWidget, InfoBar, InfoBarPosition,
+    ListWidget, PrimaryPushButton, PushButton,
+    TableWidget,
     isDarkTheme, qconfig,
 )
 from qfluentwidgets.common.color import autoFallbackThemeColor
@@ -25,6 +29,7 @@ from qfluentwidgets.common.style_sheet import setCustomStyleSheet, themeColor
 from qfluentwidgets.components.widgets.table_view import TableItemDelegate
 
 from core.settings_manager import SettingsManager
+from core.ustxreader import is_non_sung_lyric, iter_mapped_lyrics, normalize_lyric
 from ui.accent_card import AccentHeaderCardWidget, PAGE_MARGIN, PAGE_SPACING
 
 # 表格单元格统一的对齐与选中标志
@@ -165,6 +170,10 @@ class _StyleTableItemDelegate(TableItemDelegate):
 
     INDICATOR_COLUMN = 3
 
+    def helpEvent(self, event, view, option, index) -> bool:
+        """表格不使用 tooltip，直接截断，避免进入库内会访问失效 QTimer 的 tooltip delegate。"""
+        return False
+
     def paint(self, painter: QPainter, option, index):
         super().paint(painter, option, index)
         if (index.row() in self.selectedRows
@@ -194,6 +203,7 @@ class _StyleTableItemDelegate(TableItemDelegate):
             autoFallbackThemeColor(self.lightCheckedColor, self.darkCheckedColor))
         painter.drawRoundedRect(
             option.rect.x() + 4, ph + y, 3, h - 2 * ph, 1.5, 1.5)
+
 
 # MIDI 音高转换
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
@@ -227,6 +237,62 @@ def pitch_to_midi(text: str) -> int:
     return (octave + 1) * 12 + idx
 
 
+class _ChevronIndicator(QWidget):
+    """折叠指示器：Fluent 细折线 chevron，展开/收起时绕中心旋转 180°。"""
+
+    _SIZE = 16
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(self._SIZE, self._SIZE)
+        # 点击穿透到标题行，展开/收起由 eventFilter 统一处理
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._angle = 0.0
+        self._dark_mode = isDarkTheme()
+        self._icon = FluentIcon.CHEVRON_DOWN_MED.icon()
+        self._anim = QPropertyAnimation(self, b"angle", self)
+        self._anim.setDuration(160)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def getAngle(self) -> float:
+        return self._angle
+
+    def setAngle(self, angle: float):
+        self._angle = float(angle)
+        self.update()
+
+    angle = Property(float, getAngle, setAngle)
+
+    def set_expanded(self, expanded: bool, animated: bool = True):
+        target = 180.0 if expanded else 0.0
+        self._anim.stop()
+        if animated:
+            self._anim.setStartValue(self._angle)
+            self._anim.setEndValue(target)
+            self._anim.start()
+        else:
+            self.setAngle(target)
+
+    def _sync_icon(self):
+        """图标随主题重建：FluentIcon 在创建时按当前主题取色。"""
+        dark = isDarkTheme()
+        if dark != self._dark_mode:
+            self._dark_mode = dark
+            self._icon = FluentIcon.CHEVRON_DOWN_MED.icon()
+
+    def paintEvent(self, _event):
+        self._sync_icon()
+        painter = QPainter(self)
+        painter.setRenderHints(
+            QPainter.RenderHint.Antialiasing |
+            QPainter.RenderHint.SmoothPixmapTransform)
+        painter.setOpacity(0.62)  # 次级文字强度，不抢标题
+        painter.translate(self.rect().center())
+        painter.rotate(self._angle)
+        half = self._SIZE // 2
+        self._icon.paint(painter, QRect(-half, -half, self._SIZE, self._SIZE))
+
+
 class LyricEditPage(QWidget):
     """歌词编辑标签页 — 批量筛选 + 表格逐音符编辑。"""
 
@@ -237,6 +303,7 @@ class LyricEditPage(QWidget):
         self._note_styles: dict[int, int] = {}  # key=音符序号(int), value=样式索引(int)
         # 表行 → 全局音符行号映射（多轨工程只显示所选轨，样式键始终是全局行号）
         self._global_rows: list[int] = []
+        self._hidden_globals: set[int] = set()  # 被映射隐藏（含跟随延音）的全局行
         self._building_table = False  # 防止重复建表
         self._handling_selection = False  # 防止选中回调递归
         self._table_built_for: Optional[tuple] = None  # (音符列表引用, 轨道号)，避免重复重建
@@ -357,6 +424,101 @@ class LyricEditPage(QWidget):
         edit_card.viewLayout.addLayout(edit_vbox)
         layout.addWidget(edit_card, 1)
 
+        # ========== 音素映射卡片（标题栏右侧折叠） ==========
+        self.map_card = AccentHeaderCardWidget("音素映射", self)
+        self.map_expanded = False
+        self.map_count_label = BodyLabel("未设置")
+        self.map_chevron = _ChevronIndicator(self.map_card)
+        header_row = self.map_card.headerLayout
+        assert header_row is not None  # 本卡固定带标题
+        self.map_header = header_row
+        header_row.setContentsMargins(20, 12, 20, 12)
+        header_row.addWidget(self.map_count_label)
+        header_row.addWidget(self.map_chevron)
+        self.map_card._title_label.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.map_count_label.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self.map_body = QWidget()
+        map_vbox = QVBoxLayout(self.map_body)
+        map_vbox.setContentsMargins(0, 0, 0, 0)
+        map_vbox.setSpacing(10)
+
+        operation_layout = QVBoxLayout()
+        operation_layout.setSpacing(6)
+        map_row = QHBoxLayout()
+        map_row.setSpacing(12)
+        source_col = QVBoxLayout()
+        source_col.setSpacing(6)
+        source_col.addWidget(BodyLabel("原音素"))
+        self.map_source_edit = LineEdit()
+        self.map_source_edit.setClearButtonEnabled(True)
+        source_col.addWidget(self.map_source_edit)
+        map_row.addLayout(source_col, 1)
+
+        map_arrow = BodyLabel("→")
+        map_arrow.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        map_arrow.setFixedSize(28, 33)
+        map_row.addWidget(map_arrow, 0, Qt.AlignmentFlag.AlignBottom)
+
+        target_col = QVBoxLayout()
+        target_col.setSpacing(6)
+        target_col.addWidget(BodyLabel("映射为"))
+        self.map_target_edit = LineEdit()
+        self.map_target_edit.setClearButtonEnabled(True)
+        target_col.addWidget(self.map_target_edit)
+        map_row.addLayout(target_col, 1)
+
+        self.map_add_btn = PrimaryPushButton("添加映射")
+        self.map_add_btn.setMinimumWidth(96)
+        self.map_add_btn.setEnabled(False)
+        map_row.addWidget(self.map_add_btn, 0, Qt.AlignmentFlag.AlignBottom)
+
+        # 删除选中规则：用文字按钮，与样式页“新建样式 / 删除样式”保持同一套写法
+        self.map_delete_btn = PushButton("删除规则")
+        self.map_delete_btn.setMinimumWidth(96)
+        self.map_delete_btn.setToolTip("删除列表中选中的规则")
+        self.map_delete_btn.setEnabled(False)
+        map_row.addWidget(self.map_delete_btn, 0, Qt.AlignmentFlag.AlignBottom)
+        operation_layout.addLayout(map_row)
+
+        match_box = QWidget()
+        match_box.setFixedHeight(34)
+        match_layout = QHBoxLayout(match_box)
+        match_layout.setContentsMargins(0, 0, 0, 0)
+        match_layout.setSpacing(8)
+        match_icon = IconWidget(FluentIcon.SEARCH)
+        match_icon.setFixedSize(16, 16)
+        match_layout.addWidget(match_icon, 0, Qt.AlignmentFlag.AlignVCenter)
+        self.map_hint_label = BodyLabel("输入原音素后显示匹配结果")
+        self.map_hint_label.setWordWrap(True)
+        match_layout.addWidget(self.map_hint_label, 1)
+        operation_layout.addWidget(match_box)
+        map_vbox.addLayout(operation_layout)
+
+        map_vbox.addWidget(HorizontalSeparator())
+
+        self.map_rules_empty = QWidget()
+        self.map_rules_empty.setFixedHeight(117)  # 3 行 × 39px，超出滚动
+        empty_layout = QVBoxLayout(self.map_rules_empty)
+        empty_layout.setContentsMargins(0, 0, 0, 0)
+        empty_layout.addStretch()
+        empty_label = BodyLabel("暂无映射规则")
+        empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        empty_layout.addWidget(empty_label)
+        empty_layout.addStretch()
+        map_vbox.addWidget(self.map_rules_empty)
+
+        self.map_rules_list = ListWidget()
+        self.map_rules_list.setFixedHeight(117)  # 3 行 × 39px，超出滚动
+        self.map_rules_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.map_rules_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        map_vbox.addWidget(self.map_rules_list)
+
+        self.map_card.viewLayout.addWidget(self.map_body)
+        self.map_body.setVisible(False)
+        self.map_card.viewLayout.setContentsMargins(20, 0, 20, 0)
+        layout.addWidget(self.map_card)
+
     # ===================== 方向键切换样式 =====================
 
     def hideEvent(self, event):
@@ -364,6 +526,8 @@ class LyricEditPage(QWidget):
         super().hideEvent(event)
         self.table.clearSelection()
         self.table.setCurrentCell(-1, -1)
+        self.map_rules_list.clearSelection()
+        self.map_rules_list.setCurrentRow(-1)
 
     def _on_style_key(self, key: int):
         """← → 方向键回调：切换当前行样式。"""
@@ -371,6 +535,8 @@ class LyricEditPage(QWidget):
         if item is None:
             return
         row = item.row()
+        if self._row_hidden(row):
+            return  # 被映射隐藏的行不参与样式切换
         global_row = self._global_of(row)
         current_style = self._note_styles.get(global_row, 0)
         if key == Qt.Key.Key_Left:
@@ -419,21 +585,24 @@ class LyricEditPage(QWidget):
         try:
             self.table.setUpdatesEnabled(False)
             self._global_rows = filtered
+            self._rebuild_hidden_cache()
             self.table.setRowCount(len(filtered))
 
             for i, global_i in enumerate(filtered):
                 note = notes[global_i]
                 # 前三列都可选中，配合整行选择行为；文本居中
                 self.table.setItem(i, 0, self._make_item(str(i + 1)))
-                self.table.setItem(i, 1, self._make_item(note.get("lyric", "")))
+                self._set_lyric_cell(i, note)
                 self.table.setItem(
                     i, 2, self._make_item(midi_to_pitch(note.get("note_num", 0))))
                 # 样式：保留已有样式，新音符默认样式1
-                self._set_style_cell(i, self._note_styles.setdefault(global_i, 0))
+                self._set_style_cell(i, self._note_styles.setdefault(global_i, 0),
+                                     hidden=self._row_hidden(i))
 
             self._table_built_for = (notes, selected)
             self._style_dirty = False
             self._sync_styles_to_settings()
+            self._update_map_hint()
         finally:
             self._building_table = False
             self.table.setUpdatesEnabled(True)
@@ -476,18 +645,25 @@ class LyricEditPage(QWidget):
             return self._style_colors[style_index]
         return self._style_colors[0]
 
-    def _set_style_cell(self, row: int, style_index: int):
-        """设置样式单元格的文本和颜色；已存在则就地更新，不重建单元格。"""
-        text = f"样式{style_index + 1}"
-        bg, fg = self._style_paint(style_index)
+    def _set_style_cell(self, row: int, style_index: int, hidden: bool = False):
+        """设置样式单元格的文本和颜色；已存在则就地更新，不重建单元格。
+
+        hidden 为映射后不参与播放的行：文本换成“隐藏”，不涂样式色，底色跟随主题。
+        """
+        text = "隐藏" if hidden else f"样式{style_index + 1}"
         item = self.table.item(row, 3)
         if item is None:
             item = self._make_item(text)
             self.table.setItem(row, 3, item)
         else:
             item.setText(text)
-        item.setBackground(bg)
-        item.setForeground(fg)
+        if hidden:
+            item.setBackground(QBrush())
+            item.setForeground(QBrush())
+        else:
+            bg, fg = self._style_paint(style_index)
+            item.setBackground(bg)
+            item.setForeground(fg)
 
     def _refresh_style_cells(self, styles: Optional[set[int]] = None):
         """刷新样式列；styles 为 None 时全表刷新，否则只刷用到这些样式索引的行。"""
@@ -498,9 +674,206 @@ class LyricEditPage(QWidget):
             for row in range(self.table.rowCount()):
                 style_index = self._style_for_row(row)
                 if styles is None or style_index in styles:
-                    self._set_style_cell(row, style_index)
+                    self._set_style_cell(row, style_index, hidden=self._row_hidden(row))
         finally:
             self.table.setUpdatesEnabled(True)
+
+    # ===================== 音素映射 =====================
+
+    @staticmethod
+    def _map_target(lyric: str, rules: dict) -> Optional[str]:
+        """查映射目标；延音 "+" 不参与映射。"""
+        if lyric == "+":
+            return None
+        return rules.get(lyric)
+
+    def _rebuild_hidden_cache(self):
+        """计算被映射隐藏的全局行；隐藏音符后面的延音随之一并隐藏。"""
+        notes = self._s.ustx_notes
+        visible = {i for i, _ in iter_mapped_lyrics(
+            notes, self._global_rows, self._s.project.phoneme_map)}
+        self._hidden_globals = set(self._global_rows) - visible
+
+    def _row_hidden(self, row: int) -> bool:
+        return self._global_of(row) in self._hidden_globals
+
+    def _set_lyric_cell(self, row: int, note: dict):
+        """歌词列：命中映射时显示 `原歌词 → 目标`，否则原样显示。"""
+        lyric = note.get("lyric", "")
+        target = self._map_target(lyric, self._s.project.phoneme_map)
+        text = f"{lyric} → {target}" if target is not None else lyric
+        item = self.table.item(row, 1)
+        if item is None:
+            self.table.setItem(row, 1, self._make_item(text))
+        else:
+            item.setText(text)
+
+    def _refresh_mapping_cells(self):
+        """映射变化后只刷新歌词与样式两列，不重建表格、不重新赋值音符。"""
+        notes = self._s.ustx_notes
+        self._rebuild_hidden_cache()
+        self.table.setUpdatesEnabled(False)
+        try:
+            for row in range(self.table.rowCount()):
+                global_i = self._global_of(row)
+                self._set_lyric_cell(row, notes[global_i])
+                self._set_style_cell(row, self._style_for_row(row),
+                                     hidden=self._row_hidden(row))
+        finally:
+            self.table.setUpdatesEnabled(True)
+
+    @staticmethod
+    def _is_special_source(text: str) -> bool:
+        """内置非演唱符号与延音写法不能作为映射来源。"""
+        return is_non_sung_lyric(text) or normalize_lyric(text) == "+"
+
+    def _update_map_hint(self):
+        """输入来源后即时显示命中情况（当前轨列出序号，其他轨只汇总数量）。"""
+        source = self.map_source_edit.text().strip()
+        if not source:
+            self.map_hint_label.setText("输入原音素后显示匹配结果")
+            return
+        notes = self._s.ustx_notes
+        selected = self._s.project.selected_track_no
+        hit_rows = [row + 1 for row, global_i in enumerate(self._global_rows)
+                    if notes[global_i].get("lyric", "") == source]
+        other = sum(1 for n in notes
+                    if n.get("track_no", 0) != selected and n.get("lyric", "") == source)
+        if not hit_rows and not other:
+            self.map_hint_label.setText("当前工程没有匹配音符")
+            return
+        parts = []
+        if hit_rows:
+            shown = "、".join(f"#{r}" for r in hit_rows[:8])
+            if len(hit_rows) > 8:
+                shown += f" 等 {len(hit_rows)} 个"
+            parts.append(f"当前轨命中：{shown}")
+        if other:
+            parts.append(f"其他轨另有 {other} 个命中")
+        self.map_hint_label.setText("；".join(parts))
+
+    def _rebuild_map_rules(self):
+        """重建规则列表；空状态独立占位，不作为列表项参与选中。"""
+        rules = self._s.project.phoneme_map
+        self.map_rules_empty.setVisible(not rules)
+        self.map_rules_list.setVisible(bool(rules))
+        self.map_rules_list.setUpdatesEnabled(False)
+        try:
+            self.map_rules_list.clear()
+            for source, target in rules.items():
+                item = QListWidgetItem(f"{source}  →  {target}")
+                item.setData(Qt.ItemDataRole.UserRole, source)
+                self.map_rules_list.addItem(item)
+        finally:
+            self.map_rules_list.setUpdatesEnabled(True)
+        # 列表重建后 Qt 会补一个无高亮的 current 行，删除按钮只认选中
+        self.map_rules_list.clearSelection()
+        self.map_rules_list.setCurrentRow(-1)
+        QTimer.singleShot(0, self._reset_map_current)
+        self.map_delete_btn.setEnabled(False)
+        self.map_count_label.setText(f"{len(rules)} 条规则" if rules else "未设置")
+        self.map_card.layout().activate()
+        self.map_card.refresh_shadow()
+
+    def _on_map_rule_clicked(self, item: QListWidgetItem):
+        """将选中的规则回填到输入区，继续编辑后通过“更新映射”保存。"""
+        source = item.data(Qt.ItemDataRole.UserRole)
+        target = self._s.project.phoneme_map.get(source)
+        if target is None:
+            return
+        self.map_source_edit.setText(source)
+        self.map_target_edit.setText(target)
+        self.map_target_edit.setFocus()
+        self.map_target_edit.selectAll()
+
+    def _reset_map_current(self):
+        """清掉列表重建后补上的 current 行；用户已选中某行时保留。"""
+        if self.map_rules_list.selectedItems():
+            return
+        self.map_rules_list.setCurrentRow(-1)
+
+    def _on_map_selection_changed(self):
+        """选中变化时更新“删除规则”的可用状态。"""
+        self.map_delete_btn.setEnabled(bool(self.map_rules_list.selectedItems()))
+
+    def _on_delete_selected_map(self):
+        items = self.map_rules_list.selectedItems()
+        if not items:
+            return
+        source = items[0].data(Qt.ItemDataRole.UserRole)
+        self._on_remove_map(source)
+
+    def eventFilter(self, obj, event):
+        """处理映射标题行点击，并在点击规则列表外部时清除选中。"""
+        if event.type() == QEvent.Type.MouseButtonPress and isinstance(obj, QWidget):
+            inside_list = obj is self.map_rules_list or self.map_rules_list.isAncestorOf(obj)
+            if not inside_list and obj is not self.map_delete_btn:
+                self.map_rules_list.clearSelection()
+                self.map_rules_list.setCurrentRow(-1)
+        if event.type() == QEvent.Type.MouseButtonRelease and event.button() == Qt.MouseButton.LeftButton:
+            title_clicked = obj in (self.map_card._title_label, self.map_count_label)
+            header_clicked = (obj is self.map_card and
+                              self.map_header.geometry().contains(event.position().toPoint()))
+            if title_clicked or header_clicked:
+                self._toggle_map_body()
+                return True
+        return super().eventFilter(obj, event)
+
+    def _toggle_map_body(self):
+        """展开/收起映射内容；折叠时标题行上下留白保持一致。"""
+        self.setUpdatesEnabled(False)
+        try:
+            self.map_expanded = not self.map_expanded
+            self.map_body.setVisible(self.map_expanded)
+            self.map_chevron.set_expanded(self.map_expanded)
+            header_row = self.map_header
+            if self.map_expanded:
+                header_row.setContentsMargins(20, 12, 20, 0)
+                self.map_card.viewLayout.setContentsMargins(20, 12, 20, 18)
+            else:
+                header_row.setContentsMargins(20, 12, 20, 12)
+                self.map_card.viewLayout.setContentsMargins(20, 0, 20, 0)
+            self.map_card.layout().activate()
+        finally:
+            self.setUpdatesEnabled(True)
+        self.map_card.refresh_shadow()
+
+    def _on_map_input_changed(self, *_args):
+        source = self.map_source_edit.text().strip()
+        target = self.map_target_edit.text().strip()
+        self.map_add_btn.setEnabled(bool(source) and bool(target))
+        # 来源已存在时按钮语义为更新
+        self.map_add_btn.setText(
+            "更新映射" if source in self._s.project.phoneme_map else "添加映射")
+        self._update_map_hint()
+
+    def _on_add_map(self):
+        source = self.map_source_edit.text().strip()
+        target = self.map_target_edit.text().strip()
+        if not source or not target:
+            return
+        if self._is_special_source(source):
+            InfoBar.warning("无法添加", f"“{source}”是内置特殊符号，不能作为映射来源",
+                            orient=Qt.Orientation.Vertical, duration=2000,
+                            parent=self.window(), position=InfoBarPosition.TOP_RIGHT)
+            return
+        rules = dict(self._s.project.phoneme_map)
+        rules[source] = target
+        self._s.project.phoneme_map = rules
+        self.map_source_edit.clear()
+        self.map_target_edit.clear()
+        self.map_source_edit.setFocus()
+
+    def _on_remove_map(self, source: str):
+        rules = dict(self._s.project.phoneme_map)
+        if rules.pop(source, None) is None:
+            return
+        self._s.project.phoneme_map = rules
+
+    def _on_phoneme_map_changed(self, _rules: dict):
+        self._rebuild_map_rules()
+        self._refresh_mapping_cells()
+        self._on_map_input_changed()
 
     # ===================== 批量筛选 =====================
 
@@ -581,7 +954,7 @@ class LyricEditPage(QWidget):
             for row in rows:
                 global_row = self._global_of(row)
                 self._note_styles[global_row] = style_idx
-                self._set_style_cell(row, style_idx)
+                self._set_style_cell(row, style_idx, hidden=self._row_hidden(row))
         finally:
             self.table.setUpdatesEnabled(True)
         self._sync_styles_to_settings()
@@ -602,9 +975,18 @@ class LyricEditPage(QWidget):
         self._s.project.selected_track_changed.connect(self._on_track_changed)
         self._s.style.styles_changed.connect(self._on_styles_changed)
         self._s.style.note_styles_changed.connect(self._on_note_styles_changed)
+        self._s.project.phoneme_map_changed.connect(self._on_phoneme_map_changed)
         self.track_combo.currentIndexChanged.connect(self._on_track_selected)
+        self.map_add_btn.clicked.connect(self._on_add_map)
+        self.map_source_edit.textChanged.connect(self._on_map_input_changed)
+        self.map_target_edit.textChanged.connect(self._on_map_input_changed)
+        self.map_rules_list.itemClicked.connect(self._on_map_rule_clicked)
+        self.map_rules_list.itemSelectionChanged.connect(self._on_map_selection_changed)
+        self.map_delete_btn.clicked.connect(self._on_delete_selected_map)
+        QApplication.instance().installEventFilter(self)
         # 选中单元格时用强调色高亮（不依赖 stylesheet）
         self.table.currentItemChanged.connect(self._on_selection_changed)
+        self._rebuild_map_rules()
 
     def _on_notes_changed(self, notes: list):
         """音符数据更新时重建表格。
@@ -615,6 +997,7 @@ class LyricEditPage(QWidget):
         """
         self._note_styles = {}  # 新音符数据 → 清空所有逐字样式
         self._global_rows = []
+        self._hidden_globals = set()
         self._table_built_for = None
         # 本页不在前台时不建表：拖拽导入时建表会阻塞 UI，打断 InfoBar 动画。
         if self.isVisible():

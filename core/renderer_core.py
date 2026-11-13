@@ -447,11 +447,8 @@ class RendererCore:
         raw_lyric = note.get("lyric", "")
         note_num = note.get("note_num", 0)
 
-        if raw_lyric == "R":
-            self._current_lyric = self.get_silent_text()
-            self._current_note_name = ""
-        elif raw_lyric in ("-", "+"):
-            self._current_lyric = self.last_valid_lyric or self.get_silent_text()
+        if raw_lyric == "+":
+            self._current_lyric = self.last_valid_lyric
             self._current_note_name = self.get_pitch_text(note_num)
         else:
             self._current_lyric = raw_lyric

@@ -84,9 +84,11 @@ class AccentHeaderCardWidget(SimpleCardWidget):
             title_row.addWidget(self._title_label)
             title_row.addStretch()
             main_layout.addLayout(title_row)
+            self._title_row = title_row
         else:
             self._accent_bar = None
             self._title_label = None
+            self._title_row = None
 
         # 内容区
         self._view_layout = QVBoxLayout()
@@ -136,6 +138,11 @@ class AccentHeaderCardWidget(SimpleCardWidget):
     @property
     def viewLayout(self) -> QVBoxLayout:
         return self._view_layout
+
+    @property
+    def headerLayout(self) -> QHBoxLayout | None:
+        """标题行布局（标题在 stretch 之前），供页面在右侧追加控件；无标题时为 None。"""
+        return self._title_row
 
     def _on_theme_color_changed(self, _color: QColor):
         if self._accent_bar:

@@ -5,7 +5,7 @@
 供播放器和主窗口使用。
 """
 
-from typing import Any, List, Dict
+from typing import Any, Dict, Iterable, Iterator, List, Tuple
 from bisect import bisect_left, bisect_right
 import os
 
@@ -27,6 +27,51 @@ class UstxLoader(yaml.CSafeLoader):
             if key_node.value == 'lyric' and isinstance(value_node, yaml.ScalarNode):
                 mapping['lyric'] = value_node.value
         return mapping
+
+
+# 非演唱符号：休止、气声等，不产生歌词文字；严格大小写匹配与 OpenUtau 一致。
+# 息/吸/H/B 不纳入——中文歌词里也可能是真实字；cl 是促音闭锁音素，保持原样显示。
+# br 可带数字档位（部分中文 CVVC 音源用 br1~br4）。
+NON_SUNG_LYRICS = {"R", "R2", "AP", "SP", "br", "bre"}
+
+
+def is_non_sung_lyric(lyric: str) -> bool:
+    """判断是否为休止、气声等非演唱歌词。"""
+    return lyric in NON_SUNG_LYRICS or (lyric.startswith("br") and lyric[2:].isdigit())
+
+
+def normalize_lyric(lyric: str) -> str:
+    """延音类歌词统一为 "+"（+ 开头、UTAU 尾音 "-"、旧版 "..."）。"""
+    if lyric.startswith("+") or lyric in ("-", "..."):
+        return "+"
+    return lyric
+
+
+def iter_mapped_lyrics(notes: List[Dict[str, Any]], indices: Iterable[int],
+                       phoneme_map: Dict[str, str]) -> Iterator[Tuple[int, str]]:
+    """按音素映射规则产出 (音符下标, 显示歌词)。
+
+    命中的音符用映射目标替换歌词；目标是非演唱符号时该音符不产出，
+    紧随其后的延音符（"+"）一并跳过，避免继承前一句歌词。
+    """
+    hidden_prev = False
+    for i in indices:
+        lyric = notes[i].get("lyric", "")
+        if lyric == "+":
+            if not hidden_prev:
+                yield i, lyric
+            continue
+        target = phoneme_map.get(lyric)
+        if target is None:
+            hidden_prev = False
+            yield i, lyric
+            continue
+        lyric = normalize_lyric(target)
+        if is_non_sung_lyric(lyric):
+            hidden_prev = True
+            continue
+        hidden_prev = False
+        yield i, lyric
 
 
 # ===================== 主解析函数 =====================
@@ -127,6 +172,10 @@ def get_ustx_info(ustx_path: str) -> Dict[str, Any]:
             # 前缀只用于选择音源/词典，不应显示；统一按第一个 "/" 截断。
             if '/' in lyric:
                 lyric = lyric.split('/', 1)[1]
+            if is_non_sung_lyric(lyric):
+                # 休止、气声等非演唱符号直接剔除，播放时按"音符不存在"处理
+                continue
+            lyric = normalize_lyric(lyric)
             duration = note.get('duration', 0)
             note_pos = part_pos + note.get('position', 0)
             note_end = note_pos + duration
