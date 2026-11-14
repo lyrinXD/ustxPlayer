@@ -22,6 +22,7 @@ from qfluentwidgets.common.config import qconfig
 
 from core.app_icons import apply_icon, icon_files
 from core.settings_manager import SettingsManager
+from core.settings.theme import effective_window_effect, supported_window_effects
 from core.renderer_core import APP_VERSION
 from ui.accent_card import AccentHeaderCardWidget, PAGE_MARGIN, PAGE_SPACING
 
@@ -105,6 +106,16 @@ class OtherPage(QWidget):
         theme_row.addWidget(self.theme_combo)
         theme_row.addStretch()
         theme_vbox.addLayout(theme_row)
+
+        window_effect_row = QHBoxLayout()
+        window_effect_row.setSpacing(8)
+        window_effect_row.addWidget(BodyLabel("窗口效果:"))
+        self.window_effect_combo = ComboBox()
+        for mode in supported_window_effects():
+            self.window_effect_combo.addItem(self._window_effect_text(mode), userData=mode)
+        window_effect_row.addWidget(self.window_effect_combo)
+        window_effect_row.addStretch()
+        theme_vbox.addLayout(window_effect_row)
 
         # ---- 强调色设置 ----
         accent_mode_row = QHBoxLayout()
@@ -342,6 +353,13 @@ class OtherPage(QWidget):
         self.theme_combo.currentTextChanged.connect(self._on_theme_combo_changed)
         s.theme.theme_mode_changed.connect(self._on_settings_theme_mode_changed)
 
+        # 窗口效果下拉框
+        self._sync_window_effect_combo(s.theme.window_effect)
+        self.window_effect_combo.currentIndexChanged.connect(
+            self._on_window_effect_changed
+        )
+        s.theme.window_effect_changed.connect(self._sync_window_effect_combo)
+
         # 强调色模式下拉框
         self.accent_color_mode_combo.setCurrentText(
             self._accent_mode_text(s.theme.accent_color_mode)
@@ -357,6 +375,8 @@ class OtherPage(QWidget):
 
         # 卡片阴影开关
         self.sw_card_shadow.checkedChanged.connect(self._on_card_shadow_toggled)
+        qconfig.themeChanged.connect(self._sync_shadow_switch_state)
+        self._sync_shadow_switch_state()
 
         # 检查更新
         self.btn_check_update.clicked.connect(self._on_check_update_clicked)
@@ -372,6 +392,18 @@ class OtherPage(QWidget):
         """主题下拉框变化 → 更新 settings.theme_mode。"""
         mode = self._theme_combo_mode(text)
         self._s.theme.theme_mode = mode
+
+    def _on_window_effect_changed(self, index: int):
+        """窗口效果变化 → 更新 settings 并立即生效。"""
+        self._s.theme.window_effect = self.window_effect_combo.itemData(index)
+        self._s.write_settings()
+
+    def _sync_window_effect_combo(self, mode: str):
+        self.window_effect_combo.blockSignals(True)
+        self.window_effect_combo.setCurrentIndex(
+            self.window_effect_combo.findData(effective_window_effect(mode))
+        )
+        self.window_effect_combo.blockSignals(False)
 
     def _on_accent_color_mode_combo_changed(self, text: str):
         """强调色模式变化 → 更新 settings。"""
@@ -419,6 +451,17 @@ class OtherPage(QWidget):
         return {"跟随系统": "auto", "亮色": "light", "暗色": "dark"}.get(text, "auto")
 
     @staticmethod
+    def _window_effect_text(mode: str) -> str:
+        return {
+            "mica_alt": "云母 Alt",
+            "mica": "云母",
+            "acrylic": "亚克力",
+            "acrylic_legacy": "旧版亚克力",
+            "aero": "Aero 毛玻璃",
+            "none": "关闭",
+        }.get(mode, mode)
+
+    @staticmethod
     def _accent_mode_text(mode: str) -> str:
         return {"auto": "跟随系统", "custom": "自定义"}.get(mode, "跟随系统")
 
@@ -445,6 +488,19 @@ class OtherPage(QWidget):
         """卡片阴影开关：写设置并持久化；实际广播由 main 连接 settings 信号完成。"""
         self._s.theme.card_shadow_enabled = checked
         self._s.write_settings()
+
+    def _sync_shadow_switch_state(self):
+        """深色时强制关闭并禁用开关，但不改写用户设置；亮色恢复用户设定值。"""
+        dark = isDarkTheme()
+        enabled = False if dark else self._s.theme.card_shadow_enabled
+
+        self.sw_card_shadow.blockSignals(True)
+        self.sw_card_shadow.setChecked(enabled)
+        self.sw_card_shadow.blockSignals(False)
+        self.sw_card_shadow.setEnabled(not dark)
+
+        # 开关只改显示状态，未触发 checkedChanged，这里同步阴影的实际开关
+        AccentHeaderCardWidget.set_global_shadow(enabled)
 
     def _on_check_update_clicked(self):
         self.check_update(auto=False)
@@ -509,6 +565,7 @@ class OtherPage(QWidget):
         """从 settings 同步所有 UI 控件（导入 uprj 或导航切换后调用）。"""
         s = self._s
         self.theme_combo.setCurrentText(self._theme_combo_text(s.theme.theme_mode))
+        self._sync_window_effect_combo(s.theme.window_effect)
         self.accent_color_mode_combo.setCurrentText(
             self._accent_mode_text(s.theme.accent_color_mode)
         )

@@ -2,12 +2,42 @@
 """主题/强调色/卡片阴影/图标/更新检测偏好。这些是用户级偏好，
 只写入 Settings.json（[ThemeSettings] 分组），不参与 .uprj 工程序列化。"""
 
+import sys
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal
 
 _THEME_MODES = {"auto", "light", "dark"}
 _ACCENT_MODES = {"auto", "custom"}
+_WINDOW_EFFECT_FALLBACKS = {
+    "mica_alt": ("mica", "none"),
+    "mica": ("none",),
+    "acrylic": ("acrylic_legacy", "none"),
+    "acrylic_legacy": ("none",),
+    "aero": ("none",),
+    "none": (),
+}
+
+
+def supported_window_effects() -> list[str]:
+    """按展示顺序返回当前系统可用的窗口背景。"""
+    build = sys.getwindowsversion().build
+    if build >= 22523:
+        return ["mica_alt", "mica", "acrylic", "acrylic_legacy", "aero", "none"]
+    if build >= 22000:
+        return ["mica", "acrylic_legacy", "aero", "none"]
+    return ["acrylic_legacy", "aero", "none"]
+
+
+def effective_window_effect(mode: str) -> str:
+    """把设置值映射成当前系统真正可用的效果（不写回设置）。"""
+    supported = supported_window_effects()
+    if mode in supported:
+        return mode
+    for fallback in _WINDOW_EFFECT_FALLBACKS.get(mode, ()):
+        if fallback in supported:
+            return fallback
+    return supported[-1]
 
 
 class ThemeSettings(QObject):
@@ -17,6 +47,7 @@ class ThemeSettings(QObject):
     accent_color_mode_changed = Signal(str)
     custom_accent_color_changed = Signal(str)
     card_shadow_enabled_changed = Signal(bool)
+    window_effect_changed = Signal(str)
 
     def __init__(self, parent: Optional[QObject] = None):
         super().__init__(parent)
@@ -24,6 +55,7 @@ class ThemeSettings(QObject):
         self._accent_color_mode = "auto"  # auto=跟随系统, custom=自定义
         self._custom_accent_color = "#5a7a50"
         self._card_shadow_enabled = True
+        self._window_effect = "mica_alt"
         self._current_icon = ""  # 图标文件名（空=默认第一个）
         self._last_update_check_date = ""  # "YYYY-MM-DD"（空=从未）
         self._auto_check_enabled = True  # 启动自动检测更新
@@ -68,6 +100,16 @@ class ThemeSettings(QObject):
             self._card_shadow_enabled = v
             self.card_shadow_enabled_changed.emit(v)
 
+    @property
+    def window_effect(self) -> str:
+        return self._window_effect
+
+    @window_effect.setter
+    def window_effect(self, v: str):
+        if self._window_effect != v:
+            self._window_effect = v
+            self.window_effect_changed.emit(v)
+
     # 以下为纯持久化偏好，无监听方，不设 signal
 
     @property
@@ -109,6 +151,9 @@ class ThemeSettings(QObject):
             self._accent_color_mode = amode
         self._custom_accent_color = cs.get("custom_accent_color", self._custom_accent_color)
         self._card_shadow_enabled = bool(cs.get("card_shadow_enabled", self._card_shadow_enabled))
+        effect = cs.get("window_effect", self._window_effect)
+        if effect in _WINDOW_EFFECT_FALLBACKS:
+            self._window_effect = effect
         self._current_icon = cs.get("current_icon", self._current_icon)
         self._last_update_check_date = cs.get("last_update_check_date", self._last_update_check_date)
         self._auto_check_enabled = bool(cs.get("auto_check_enabled", self._auto_check_enabled))
@@ -120,6 +165,7 @@ class ThemeSettings(QObject):
             "accent_color_mode": self._accent_color_mode,
             "custom_accent_color": self._custom_accent_color,
             "card_shadow_enabled": self._card_shadow_enabled,
+            "window_effect": self._window_effect,
             "current_icon": self._current_icon,
             "last_update_check_date": self._last_update_check_date,
             "auto_check_enabled": self._auto_check_enabled,

@@ -1,6 +1,7 @@
 # main.py — ustxPlayer 主入口
 """提供侧边导航的现代化界面。"""
 
+import ctypes
 import os
 import sys
 import winreg
@@ -14,12 +15,13 @@ from PySide6.QtGui import QIcon, QColor, QGuiApplication
 from qfluentwidgets import (
     FluentWindow, NavigationItemPosition, FluentIcon,
     InfoBar, InfoBarPosition, MessageBox, setTheme, Theme, setThemeColor,
-    PopUpAniStackedWidget, PrimaryToolButton, ToolTipFilter,
+    PopUpAniStackedWidget, PrimaryToolButton, ToolTipFilter, isDarkTheme,
 )
 
 from core.app_icons import apply_icon, resolve_icon_path
 from core.log import logger
 from core.settings_manager import SettingsManager
+from core.settings.theme import effective_window_effect
 from core.uprj_io import ProjectFileMissingError
 import core.ustxreader as ur
 
@@ -30,6 +32,14 @@ from ui.player_style_page import PlayerStylePage
 from ui.lyric_edit_page import LyricEditPage
 from ui.other_page import OtherPage
 from ui.export_window import ExportPage
+
+
+def _set_dwm_attribute(hwnd: int, attribute: int, value: int):
+    """写 DWM 窗口属性；库只封装了 Mica，Acrylic 与旧版 Mica 需自行下发。"""
+    dwmapi = ctypes.WinDLL("dwmapi")
+    dwmapi.DwmSetWindowAttribute(
+        ctypes.c_int(hwnd), attribute, ctypes.byref(ctypes.c_int(value)), 4
+    )
 
 
 class _PageScrollArea(SmoothScrollArea):
@@ -110,6 +120,9 @@ class MainWindow(FluentWindow):
         self._settings.theme.theme_mode_changed.connect(
             self._on_theme_mode_changed
         )
+        self._settings.theme.window_effect_changed.connect(
+            self._apply_window_effect
+        )
 
     def _apply_theme(self):
         """根据 theme_mode 设置 qfluentwidgets 主题（亮/暗/自动）。"""
@@ -126,6 +139,52 @@ class MainWindow(FluentWindow):
     def _refresh_theme(self):
         """切换主题后更新页面背景色。"""
         self._apply_area_background()
+
+    _window_effect_mode = "mica_alt"
+
+    def _normalBackgroundColor(self):
+        if self._window_effect_mode == "none":
+            return (
+                self._darkBackgroundColor if isDarkTheme() else self._lightBackgroundColor
+            )
+        return QColor(0, 0, 0, 0)
+
+    @staticmethod
+    def _acrylic_gradient() -> str:
+        return "1E1E1E99" if isDarkTheme() else "F2F2F230"
+
+    def _apply_window_effect(self):
+        """按设置应用窗口背景；不可用的效果由 settings 侧映射成本机可用项。"""
+        mode = effective_window_effect(self._settings.theme.window_effect)
+        self._window_effect_mode = mode
+        hwnd = int(self.winId())
+        self.windowEffect.removeBackgroundEffect(hwnd)
+
+        if mode == "mica_alt":
+            self.windowEffect.setMicaEffect(hwnd, isDarkTheme(), isAlt=True)
+        elif mode == "mica":
+            self.windowEffect.setMicaEffect(hwnd, isDarkTheme())
+        elif mode == "acrylic":
+            # 库没有 Acrylic 入口：借 setMicaEffect 做边框延伸与暗色标题栏，再改背景类型
+            self.windowEffect.setMicaEffect(hwnd, isDarkTheme())
+            _set_dwm_attribute(hwnd, 38, 3)
+        else:
+            # 旧效果走 AccentState，必须复位 DWM 背景类型，否则 Win11 会保留上一种
+            build = sys.getwindowsversion().build
+            if build >= 22523:
+                _set_dwm_attribute(hwnd, 38, 1)
+            elif build >= 22000:
+                _set_dwm_attribute(hwnd, 1029, 0)
+            if mode == "acrylic_legacy":
+                self.windowEffect.setAcrylicEffect(hwnd, self._acrylic_gradient())
+            elif mode == "aero":
+                self.windowEffect.setAeroEffect(hwnd)
+
+        self.setBackgroundColor(self._normalBackgroundColor())
+
+    def _onThemeChangedFinished(self):
+        super()._onThemeChangedFinished()
+        self._apply_window_effect()
 
     def _on_system_theme_changed(self):
         """系统主题变化 — 仅在'跟随系统'模式下刷新。"""
@@ -295,6 +354,8 @@ class MainWindow(FluentWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        # 基类 showEvent 会重设普通 Mica，这里覆盖为当前设置的效果
+        self._apply_window_effect()
         if not hasattr(self, "export_stack"):
             return
         title_h = 48
