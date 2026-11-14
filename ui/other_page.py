@@ -211,7 +211,7 @@ class OtherPage(QWidget):
 
         v2m_btn = PushButton("Vocal2Midi")
         v2m_btn.setToolTip("音频转 USTX 工程")
-        v2m_btn.clicked.connect(lambda: self._open_url("https://www.bilibili.com/video/BV1Ww7C6kEqL/"))
+        v2m_btn.clicked.connect(lambda: self._open_url("https://www.bilibili.com/video/BV1d5HC6ME3p/"))
         tool_row.addWidget(v2m_btn)
 
         tool_row.addStretch()

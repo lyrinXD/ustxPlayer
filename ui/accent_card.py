@@ -22,7 +22,7 @@ class _AccentBar(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedSize(3, 16)
+        self.setFixedSize(3, 18)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
@@ -31,7 +31,8 @@ class _AccentBar(QWidget):
         painter.setRenderHints(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(themeColor())
-        painter.drawRoundedRect(QRectF(self.rect()), 1.5, 1.5)
+        # 文字墨迹的视觉中心比控件几何中心低约 1px，竖线同步下移保持视觉居中
+        painter.drawRoundedRect(QRectF(0, 2, 3, 16), 1.5, 1.5)
 
 
 class AccentHeaderCardWidget(SimpleCardWidget):
